@@ -57,12 +57,32 @@ async function run() {
          const clubsCollection = db.collection('clubs')
          const eventRegistrationsCollection = db.collection('eventRegistrations')
          const eventsCollection = db.collection('events')
-         const membershipsCollection = db.collection('emberships')
+         const membershipsCollection = db.collection('memberships')
          const paymentsCollection = db.collection('payments')
          const usersCollection = db.collection('users')
 
 
+         
+         app.get("/clubs", async (req, res) => {
+           try{
+                  const clubs = await clubsCollection.find().toArray()
+                  res.send(clubs);
 
+
+                }catch(error) {
+                   res.status(500).send({message: "Filed to fetch clubs", error});
+                }
+               })
+
+         app.get("/featuredClubs", async (req, res) => {
+           try{
+                  const clubs = await clubsCollection.find().limit(8).sort({
+membershipFee: -1}).toArray()
+                  res.send(clubs);
+                }catch(error) {
+                   res.status(500).send({message: "Filed to fetch clubs", error});
+                }
+               })
 
 
     // Send a ping to confirm a successful connection
