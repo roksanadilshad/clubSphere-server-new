@@ -1,7 +1,7 @@
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
-const { MongoClient, ServerApiVersion } = require('mongodb')
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
 const admin = require('firebase-admin')
 const port = process.env.PORT || 3000
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString(
@@ -62,7 +62,7 @@ async function run() {
          const usersCollection = db.collection('users')
 
 
-         
+        //  clubs
          app.get("/clubs", async (req, res) => {
            try{
                   const clubs = await clubsCollection.find().toArray()
@@ -73,7 +73,7 @@ async function run() {
                    res.status(500).send({message: "Filed to fetch clubs", error});
                 }
                })
-
+// featuredClubs
          app.get("/featuredClubs", async (req, res) => {
            try{
                   const clubs = await clubsCollection.find().limit(8).sort({
@@ -83,6 +83,152 @@ membershipFee: -1}).toArray()
                    res.status(500).send({message: "Filed to fetch clubs", error});
                 }
                })
+
+// clubDetails
+              app.get("/clubs/:id", async (req, res) => {
+                      try{
+                          const id = req.params.id;
+
+                           if(!ObjectId.isValid(id)){
+                    return res.status(400).send({message: "Invalid Club ID"})
+                  }
+
+                  const club = await clubsCollection.findOne({_id: new ObjectId(id)})
+
+                  if(!club){
+                    return res.status(404).send({message: "Club not found"})
+                  }
+
+                  res.send(club)
+                }catch(error) {
+                   res.status(500).send({message: "Filed to fetch clubs", error});
+                }
+               })
+         // user save
+         app.post("/users", async (req, res) => {
+          const user = req.body;
+       // email exist
+          const exist = await usersCollection.findOne({email: user.email});
+          if(exist){
+            return res.send({message: "User already exists", inserted: false});
+          }
+            user.role = "member";
+            user.createdAt = new Date();
+            
+            const result = await usersCollection.insertOne(user);
+            res.send(result);
+
+         })
+
+       // get All user (admin)
+       app.get("/users", async (req, res) =>{
+        const result = await usersCollection.find().toArray();
+        res.send(result)
+       });
+
+       // get single user by email
+       app.get("users/role/:email", async (req, res) =>{
+        const email = req.params.email;
+        const result= await usersCollection.findOne({email})
+        res.send(result)
+       })
+
+ //user Update (admin)
+         app.patch("users/role/:email", async (req, res)=>{
+          const email = req.params.email;
+             const {role} = req.body;
+            
+        const result = await usersCollection.updateOne(
+          {email},
+          {$set: {role}}
+        )
+        res.send(result)
+         })  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     // Send a ping to confirm a successful connection
