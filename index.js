@@ -602,16 +602,30 @@ app.post("/events", async (req, res) => {
 
 
 // Update event
-app.put("/events/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updatedEvent = req.body;
-    await eventsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedEvent });
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+app.get("/events/:id", async (req, res) => {
+  const { id } = req.params;
+  const event = await eventsCollection.findOne({ _id: new ObjectId(id) });
+  if (!event) return res.status(404).json({ message: "Event not found" });
+  res.json(event);
 });
+
+//put
+app.put("/events/:id", async (req, res) => {
+  const { id } = req.params;
+  const updatedData = req.body;
+
+  const result = await eventsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: updatedData }
+  );
+
+  if (result.matchedCount === 0) {
+    return res.status(404).json({ message: "Event not found" });
+  }
+
+  res.json({ success: true });
+});
+
 
 // Delete event
 app.delete("/events/:id", async (req, res) => {
