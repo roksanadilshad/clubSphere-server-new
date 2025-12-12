@@ -148,6 +148,11 @@ membershipFee: -1}).toArray()
         const result = await clubsCollection.find().toArray();
         res.send(result)
        });
+       // get All events (admin)
+       app.get("/events", async (req, res) =>{
+        const result = await eventsCollection.find().toArray();
+        res.send(result)
+       });
 // status approve of clubs
        app.patch("/clubs/approve/:id", async (req, res) => {
   const id = req.params.id;
@@ -640,6 +645,62 @@ app.delete("/events/:id", async (req, res) => {
 });
 
 
+// POST /events/:eventId/register
+app.post("/events/:eventId/register", async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { userEmail } = req.body;
+
+    if (!ObjectId.isValid(eventId)) {
+      return res.status(400).json({ message: "Invalid eventId" });
+    }
+
+    const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });
+    if (!event) return res.status(404).json({ message: "Event not found" });
+
+    // Register the user (insert into eventRegistrations)
+    await eventRegistrationsCollection.insertOne({
+      eventId,
+      userEmail,
+      clubId: event.clubId,
+      status: "registered",
+      paymentId: null,
+      registeredAt: new Date(),
+    });
+
+    res.status(201).json({ message: "Registered successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// GET /events
+app.get("/events", async (req, res) => {
+  try {
+    const events = await eventsCollection.aggregate([
+      {
+        $lookup: {
+          from: "eventRegistrations",       // collection with registrations
+          localField: "_id",                // event _id
+          foreignField: "eventId",          // field in registrations pointing to event
+          as: "registrationsList",          // new field to hold registrations
+        },
+      },
+      {
+        $addFields: { registrations: { $size: "$registrationsList" } },
+      },
+      {
+        $project: { registrationsList: 0 }, // optionally remove detailed list
+      },
+    ]).toArray();
+
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
 
 
 
