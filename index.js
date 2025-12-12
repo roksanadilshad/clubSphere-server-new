@@ -243,7 +243,40 @@ app.patch("/admin/clubs/reject/:id", async (req, res) => {
 });
 
 
+// POST /memberships - user joins a club
+app.post("/memberships", async (req, res) => {
+  try {
+    const { userEmail, clubName, status, paymentId, joinedAt, expiresAt } = req.body;
 
+    if (!userEmail || !clubName || !status) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    const newMembership = {
+      userEmail,
+      clubId: clubName,         // store name instead of ObjectId
+      status,
+      paymentId: paymentId || null,
+      joinedAt: joinedAt ? new Date(joinedAt) : new Date(),
+      expiresAt: expiresAt ? new Date(expiresAt) : null
+    };
+
+    const result = await membershipsCollection.insertOne(newMembership);
+
+    res.status(201).json({ success: true, membershipId: result.insertedId, data: newMembership });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+
+// Example GET memberships by user
+app.get("/memberships", async (req, res) => {
+  const { userEmail } = req.query;
+  const memberships = await membershipsCollection.find({ userEmail }).toArray();
+  res.send(memberships);
+});
 
 
 
