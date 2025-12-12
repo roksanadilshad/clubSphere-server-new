@@ -385,48 +385,245 @@ app.delete("/clubs/:id", async (req, res) => {
 
 
 // this might be overriding the working route
+// app.get("/clubs/:id", async (req, res) => {
+//   try {
+//     const { id } = req.params;
+//      const updatedData = req.body;
+
+//     if (!ObjectId.isValid(id)) {
+//       return res.status(400).json({ message: "Invalid Club ID" });
+//     }
+
+//     const result = await client
+//       .db("clubspheredb")
+//       .collection("clubs")
+//       .updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
+
+//       if (result.matchedCount === 0) {
+//       return res.status(404).json({ message: "Club not found" });
+//     }
+
+//     // const club = await client.db("clubspheredb").collection("clubs").findOne({ _id: new ObjectId(id) });
+
+//     // if (!club) {
+//     //   return res.status(404).json({ message: "Club not found" });
+//     // }
+
+//     res.json({ success: true, updatedData });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Server Error" });
+//   }
+// });
+
 app.get("/clubs/:id", async (req, res) => {
   try {
     const { id } = req.params;
-     const updatedData = req.body;
 
     if (!ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "Invalid Club ID" });
+      return res.status(400).json({ message: "Invalid ID" });
     }
 
-    const result = await client
-      .db("clubspheredb")
-      .collection("clubs")
-      .updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
+    const club = await clubsCollection.findOne({ _id: new ObjectId(id) });
 
-      if (result.matchedCount === 0) {
-      return res.status(404).json({ message: "Club not found" });
-    }
+    if (!club) return res.status(404).json({ message: "Club not found" });
 
-    // const club = await client.db("clubspheredb").collection("clubs").findOne({ _id: new ObjectId(id) });
+    res.json(club);
 
-    // if (!club) {
-    //   return res.status(404).json({ message: "Club not found" });
-    // }
-
-    res.json({ success: true, updatedData });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server Error" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+
+//get members of clubs
+app.get("/clubs/:clubId/members", async (req, res) => {
+  try {
+    const {clubId} = req.params;
+
+    const memberships = await membershipsCollection
+      .find({ clubId: decodeURIComponent(clubId)  })
+      .toArray();
+
+    // Get all related user data
+    const usersEmails = memberships.map(m => m.userEmail);
+
+    const users = await usersCollection
+      .find({ email: { $in: usersEmails } })
+      .toArray();
+
+    // Merge users + membership info into one object
+    const members = memberships.map((membership) => {
+      const user = users.find((u) => u.email === membership.userEmail);
+
+      return {
+        id: membership._id,
+        name: user?.name || "Unknown",
+        email: membership.userEmail,
+        photoURL: user?.photoURL || null,
+        status: membership.status,
+        joinedAt: membership.joinedAt,
+        expiryDate: membership.expiresAt,
+        membershipFee: membership.membershipFee || 0
+      };
+    });
+
+    res.json(members);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to fetch members" });
+  }
+});
+
+//expiration
+app.patch("/memberships/:id/expire", async (req, res) => {
+  try {
+    const membershipId = req.params.id;
+
+    const result = await membershipsCollection.updateOne(
+      { _id: new ObjectId(membershipId) },
+      {
+        $set: {
+          status: "expired",
+          expiresAt: new Date()
+        }
+      }
+    );
+
+    if (result.modifiedCount === 0) {
+      return res.status(400).json({ message: "Failed to update membership" });
+    }
+
+    res.json({ message: "Membership expired successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 
 
 
+// GET /manager/members?managerEmail=...
+// GET /manager/members?managerEmail=...
+app.get("/manager/members", async (req, res) => {
+  try {
+    const { managerEmail } = req.query;
+    if (!managerEmail) return res.status(400).json({ message: "managerEmail required" });
+
+    // Get all clubs managed by this manager
+    const clubs = await clubsCollection.find({ managerEmail }).toArray();
+    const clubNames = clubs.map(c => c.clubName); // keep using clubName
+
+    // Get memberships for these clubs
+    const memberships = await membershipsCollection
+      .find({ clubId: { $in: clubNames } })
+      .toArray();
+
+    // Get user info
+    const userEmails = memberships.map(m => m.userEmail);
+    const users = await usersCollection
+      .find({ email: { $in: userEmails } })
+      .toArray();
+
+    // Merge data
+    const members = memberships.map((m) => {
+      const user = users.find(u => u.email === m.userEmail);
+      return {
+        id: m._id,
+        name: user?.name || "Unknown",
+        email: m.userEmail,
+        photoURL: user?.photoURL || null,
+        status: m.status,
+        joinedAt: m.joinedAt,
+        expiryDate: m.expiresAt,
+        clubName: m.clubId,
+        membershipFee: m.membershipFee || 0,
+      };
+    });
+
+    res.json(members);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to fetch members" });
+  }
+});
 
 
 
+// Get all events for a manager's clubs
+app.get("/manager/events", async (req, res) => {
+  try {
+    const email = req.query.email; // manager email
+    if (!email) return res.status(400).json({ message: "Email required" });
+
+    const clubs = await clubsCollection.find({ managerEmail: email }).toArray();
+    const clubIds = clubs.map((c) => c._id.toString());
+
+    const events = await eventsCollection.find({ clubId: { $in: clubIds } }).toArray();
+    res.json(events);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// POST /events
+app.post("/events", async (req, res) => {
+  try {
+    const { title, description, eventDate, location, isPaid, eventFee, maxAttendees, clubId } = req.body;
+
+    if (!title || !description || !eventDate || !location || maxAttendees == null) {
+      return res.status(400).json({ message: "Required fields missing" });
+    }
+
+    const newEvent = {
+      title,
+      description,
+      eventDate: new Date(eventDate),
+      location,
+      isPaid: Boolean(isPaid),
+      eventFee: isPaid ? Number(eventFee) : 0,
+      maxAttendees: Number(maxAttendees),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      clubId
+    };
+
+    const result = await eventsCollection.insertOne(newEvent);
+
+    res.status(201).json({ success: true, event: result });
+  } catch (err) {
+    console.error("Error creating event:", err);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
 
 
+// Update event
+app.put("/events/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updatedEvent = req.body;
+    await eventsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updatedEvent });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
-
-
+// Delete event
+app.delete("/events/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await eventsCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) return res.status(404).json({ message: "Event not found" });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 
 
