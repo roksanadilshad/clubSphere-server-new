@@ -645,35 +645,31 @@ app.delete("/events/:id", async (req, res) => {
 });
 
 
-// POST /events/:eventId/register
-app.post("/events/:eventId/register", async (req, res) => {
+app.post("/events/:id/register", async (req, res) => {
+  const { eventId, clubId, userEmail } = req.body;
+
+  if (!eventId || !userEmail || !clubId) {
+    return res.status(400).json({ message: "Missing required data" });
+  }
+
+  const registration = {
+    eventId,      // store event name
+    clubId,       // store club name
+    userEmail,
+    status: "registered",
+    paymentId: null,
+    registeredAt: new Date(),
+  };
+
   try {
-    const { eventId } = req.params;
-    const { userEmail } = req.body;
-
-    if (!ObjectId.isValid(eventId)) {
-      return res.status(400).json({ message: "Invalid eventId" });
-    }
-
-    const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });
-    if (!event) return res.status(404).json({ message: "Event not found" });
-
-    // Register the user (insert into eventRegistrations)
-    await eventRegistrationsCollection.insertOne({
-      eventId,
-      userEmail,
-      clubId: event.clubId,
-      status: "registered",
-      paymentId: null,
-      registeredAt: new Date(),
-    });
-
+    await eventRegistrationsCollection.insertOne(registration);
     res.status(201).json({ message: "Registered successfully" });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Internal server error" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to register" });
   }
 });
+
 
 // GET /events
 app.get("/events", async (req, res) => {
