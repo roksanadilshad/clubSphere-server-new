@@ -31,6 +31,7 @@ app.use(express.json())
 const verifyJWT = async (req, res, next) => {
   const token = req?.headers?.authorization?.split(' ')[1]
   console.log(token)
+
   if (!token) return res.status(401).send({ message: 'Unauthorized Access!' })
   try {
     const decoded = await admin.auth().verifyIdToken(token)
@@ -64,17 +65,15 @@ async function run() {
 
         //  clubs
          app.get("/clubs", async (req, res) => {
-           try{
-                  const clubs = await clubsCollection.find().toArray()
-                  res.send(clubs);
+  const query = {};
+  if (req.query.status) query.status = req.query.status;
 
+  const result = await clubsCollection.find(query).toArray();
+  res.send(result);
+});
 
-                }catch(error) {
-                   res.status(500).send({message: "Filed to fetch clubs", error});
-                }
-               })
 // featuredClubs
-         app.get("/featuredClubs", async (req, res) => {
+         app.get("/featuredClubs",  async (req, res) => {
            try{
                   const clubs = await clubsCollection.find().limit(8).sort({
 membershipFee: -1}).toArray()
@@ -85,7 +84,7 @@ membershipFee: -1}).toArray()
                })
 
 // clubDetails
-              app.get("/clubs/:id", async (req, res) => {
+              app.get("/clubs/:id",  async (req, res) => {
                       try{
                           const id = req.params.id;
 
@@ -104,6 +103,22 @@ membershipFee: -1}).toArray()
                    res.status(500).send({message: "Filed to fetch clubs", error});
                 }
                })
+
+              //create clubs
+              app.post("/clubs", async (req, res) => {
+  try {
+    const data = req.body;
+    data.status = "pending";
+    data.createdAt = new Date();
+    data.updatedAt = new Date();
+
+    const result = await clubsCollection.insertOne(data);
+    res.send(result);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
+});
+
          // user save
          app.post("/users", async (req, res) => {
           const user = req.body;
@@ -121,31 +136,111 @@ membershipFee: -1}).toArray()
          })
 
        // get All user (admin)
-       app.get("/users", async (req, res) =>{
+       app.get("/users", verifyJWT, async (req, res) =>{
         const result = await usersCollection.find().toArray();
         res.send(result)
        });
-
-       // get single user by email
-       app.get("users/role/:email", async (req, res) =>{
-        const email = req.params.email;
-        const result= await usersCollection.findOne({email})
+       // get All clubs (admin)
+       app.get("/clubs", verifyJWT, async (req, res) =>{
+        const result = await clubsCollection.find().toArray();
         res.send(result)
-       })
+       });
+// status approve of clubs
+       app.patch("/clubs/approve/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await clubsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "approved", updatedAt: new Date() } }
+  );
+  res.send(result);
+});
+// status reject of clubs
+       app.patch("/clubs/reject/:id", async (req, res) => {
+  const id = req.params.id;
+  const result = await clubsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "reject", updatedAt: new Date() } }
+  );
+  res.send(result);
+});
+
+       // Get user role by email
+        app.get("/users/role/:email", verifyJWT, async (req, res) => {
+         const email = req.params.email;
+         const user = await usersCollection.findOne({ email });
+       
+         if (!user) return res.status(404).send({ message: "User not found" });
+
+      res.send({ role: user.role });
+        });
 
  //user Update (admin)
-         app.patch("users/role/:email", async (req, res)=>{
+         app.patch("/users/role/:email", verifyJWT, async (req, res)=>{
           const email = req.params.email;
              const {role} = req.body;
             
-        const result = await usersCollection.updateOne(
-          {email},
-          {$set: {role}}
-        )
-        res.send(result)
-         })  
+         try {
+    const result = await usersCollection.updateOne(
+      { email: email },
+      { $set: { role: role } }
+    );
 
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ message: "Failed to update role", error });
+  }  
+  });
 
+app.get('/users/:email', verifyJWT, async (req, res) => {
+    const email = req.params.email;
+
+    try {
+        const user = await usersCollection.findOne({ email });
+
+        if (!user) {
+            return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send(user);
+
+    } catch (error) {
+        res.status(500).send({ message: "Server Error", error });
+    }
+});
+
+//get all clubs
+app.get("/admin/clubs", async (req, res) => {
+  try {
+    const clubs = await clubsCollection.find().toArray();
+    res.send(clubs);
+  } catch (err) {
+    res.status(500).send({ error: err.message });
+  }
+});
+
+//approve a club
+app.patch("/admin/clubs/approve/:id", async (req, res) => {
+  const id = req.params.id;
+
+  const result = await clubsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "approved", updatedAt: new Date() } }
+  );
+
+  res.send(result);
+});
+
+//reject a club
+app.patch("/admin/clubs/reject/:id", async (req, res) => {
+  const id = req.params.id;
+
+  const result = await clubsCollection.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { status: "rejected", updatedAt: new Date() } }
+  );
+
+  res.send(result);
+});
 
 
 
