@@ -44,6 +44,9 @@ const verifyJWT = async (req, res, next) => {
   }
 }
 
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
+
+
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
@@ -246,15 +249,15 @@ app.patch("/admin/clubs/reject/:id", async (req, res) => {
 // POST /memberships - user joins a club
 app.post("/memberships", async (req, res) => {
   try {
-    const { userEmail, clubName, status, paymentId, joinedAt, expiresAt } = req.body;
+    const { userEmail, clubId, status, paymentId, joinedAt, expiresAt } = req.body;
 
-    if (!userEmail || !clubName || !status) {
+    if (!userEmail || !clubId || !status) {
       return res.status(400).json({ success: false, message: "Missing required fields" });
     }
 
     const newMembership = {
       userEmail,
-      clubId: clubName,         // store name instead of ObjectId
+      clubId,         // store name instead of ObjectId
       status,
       paymentId: paymentId || null,
       joinedAt: joinedAt ? new Date(joinedAt) : new Date(),
@@ -272,10 +275,145 @@ app.post("/memberships", async (req, res) => {
 
 
 // Example GET memberships by user
-app.get("/memberships", async (req, res) => {
+// app.get("/memberships", async (req, res) => {
+//   const { userEmail, clubId } = req.query;
+
+//   const membership = await membershipsCollection.findOne({
+//     userEmail,
+//     clubId
+//   });
+
+//   res.send({
+//     exists: !!membership,
+//     data: membership || null
+//   });
+// });
+
+
+app.get("/memberships/check", async (req, res) => {
+  const { userEmail, clubId } = req.query; // use clubId everywhere
+  const membership = await membershipsCollection.findOne({ userEmail, clubId });
+  res.send({ isMember: !!membership });
+});
+
+
+// GET /memberships?userEmail=...
+app.get('/memberships', async (req, res) => {
   const { userEmail } = req.query;
-  const memberships = await membershipsCollection.find({ userEmail }).toArray();
-  res.send(memberships);
+  if (!userEmail) return res.status(400).json({ error: 'User email is required' });
+
+  try {
+    const memberships = await membershipsCollection
+      .find({ userEmail, status: 'active' }) // only active memberships
+      .toArray();
+
+    res.json(memberships);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch memberships' });
+  }
+});
+
+
+//leave club
+ app.delete("/memberships/:id", async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid ID" });
+  const result = await membershipsCollection.deleteOne({ _id: new ObjectId(id) });
+  if (result.deletedCount === 0) return res.status(404).json({ message: "Not found" });
+  res.status(200).json({ message: "Membership removed successfully" });
+});
+
+
+// GET /clubs?managerEmail=manager@example.com
+app.get("/clubs", async (req, res) => {
+  try {
+    const { managerEmail } = req.query;
+    const query = managerEmail ? { managerEmail } : {};
+    const clubs = await clubsCollection.find(query).toArray();
+    res.send(clubs);
+  } catch (err) {
+    res.status(500).send({ message: err.message });
+  }
+});
+
+// PATCH /clubs/:id
+app.patch("/clubs/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const updatedData = req.body;
+    await clubsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updatedData }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+
+// Fetch all clubs for a manager
+app.get("/manager/clubs", async (req, res) => {
+  const email = req.query.email;
+  if (!email) return res.status(400).json({ message: "Email required" });
+  const clubs = await clubsCollection.find({ managerEmail: email }).toArray();
+  res.json(clubs);
+});
+
+// DELETE /clubs/:id
+app.delete("/clubs/:id", async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ message: "Invalid club ID" });
+  }
+
+  try {
+    const result = await clubsCollection.deleteOne({ _id: new ObjectId(id) });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ message: "Club not found" });
+    }
+
+    res.status(200).json({ message: "Club deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting club:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
+
+
+// this might be overriding the working route
+app.get("/clubs/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+     const updatedData = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid Club ID" });
+    }
+
+    const result = await client
+      .db("clubspheredb")
+      .collection("clubs")
+      .updateOne({ _id: new ObjectId(id) }, { $set: updatedData });
+
+      if (result.matchedCount === 0) {
+      return res.status(404).json({ message: "Club not found" });
+    }
+
+    // const club = await client.db("clubspheredb").collection("clubs").findOne({ _id: new ObjectId(id) });
+
+    // if (!club) {
+    //   return res.status(404).json({ message: "Club not found" });
+    // }
+
+    res.json({ success: true, updatedData });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
+  }
 });
 
 
@@ -339,21 +477,17 @@ app.get("/memberships", async (req, res) => {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+//payment related api
+app.post('/create-checkout-session', async (req, res) => {
+  const { priceId } = req.body;
+  const session = await stripe.checkout.sessions.create({
+    line_items: [{ price: priceId, quantity: 1 }],
+    mode: 'payment',
+    success_url: `${process.env.SITE_DOMAIN}/payment-success`,
+    cancel_url: `${process.env.SITE_DOMAIN}/payment-cancel`,
+  });
+  res.json({ url: session.url });
+});
 
 
 
