@@ -698,9 +698,54 @@ app.get("/events", async (req, res) => {
   }
 });
 
+// GET /api/manager/events/:eventId/registrations
+app.get("/manager/events/:eventId/register", async (req, res) => {
+  const { eventId } = req.params;
+
+  try {
+    const registrations = await eventRegistrationsCollection
+      .find({ eventId }) // match eventId (could be ObjectId if needed)
+      .project({ userEmail: 1, status: 1, registeredAt: 1, _id: 0 }) // only needed fields
+      .toArray();
+
+    res.json(registrations);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Failed to fetch registrations" });
+  }
+});
 
 
+// app.get("/manager/events", async (req, res) => {
+//   try {
+//     const managerEmail = req.user.email; // assuming you have auth middleware
+//     const events = await Event.find({ managerEmail }); // fetch events for this manager
+//     res.send(events);
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send({ message: "Server error" });
+//   }
+// });
 
+app.get("/events/:eventId/registrations", async (req, res) => {
+  const { eventId } = req.params;
+
+  // 1️⃣ Find the event by _id
+  const event = await eventsCollection.findOne({
+    _id: new ObjectId(eventId),
+  });
+
+  if (!event) {
+    return res.status(404).send({ message: "Event not found" });
+  }
+
+  // 2️⃣ Use event TITLE to fetch registrations
+  const registrations = await eventRegistrationsCollection
+    .find({ eventId: event.title })   // ✅ MATCHES DB
+    .toArray();
+
+  res.send(registrations);
+});
 
 
 
