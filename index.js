@@ -510,7 +510,7 @@ app.patch("/memberships/:id/expire", async (req, res) => {
 
 
 
-// GET /manager/members?managerEmail=...
+
 // GET /manager/members?managerEmail=...
 app.get("/manager/members", async (req, res) => {
   try {
@@ -645,33 +645,77 @@ app.delete("/events/:id", async (req, res) => {
 });
 
 
-app.post("/events/:id/register", async (req, res) => {
-  const { eventId, clubId, userEmail } = req.body;
+// app.post("/events/:id/register", async (req, res) => {
+//   const { eventId, clubId, userEmail } = req.body;
 
-  if (!eventId || !userEmail || !clubId) {
-    return res.status(400).json({ message: "Missing required data" });
-  }
+//   if (!eventId || !userEmail || !clubId) {
+//     return res.status(400).json({ message: "Missing required data" });
+//   }
 
-  const registration = {
-    eventId,      // store event name
-    clubId,       // store club name
-    userEmail,
-    status: "registered",
-    paymentId: null,
-    registeredAt: new Date(),
-  };
+//   const registration = {
+//     eventId,      // store event name
+//     clubId,       // store club name
+//     userEmail,
+//     status: "registered",
+//     paymentId: null,
+//     registeredAt: new Date(),
+//   };
 
+//   try {
+//     await eventRegistrationsCollection.insertOne(registration);
+//     res.status(201).json({ message: "Registered successfully" });
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).json({ message: "Failed to register" });
+//   }
+// });
+
+
+// GET /events
+app.post("/events/:eventId/register", async (req, res) => {
   try {
-    await eventRegistrationsCollection.insertOne(registration);
-    res.status(201).json({ message: "Registered successfully" });
+    const { eventId } = req.params;   // eventId = ObjectId string
+    const { userEmail } = req.body;
+
+    if (!userEmail) return res.status(400).json({ error: "userEmail is required" });
+
+    // ✅ Find event by _id
+    const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });
+    if (!event) return res.status(404).json({ error: "Event not found" });
+
+    // ✅ Check if already registered
+    const existingRegistration = await eventRegistrationsCollection.findOne({
+      eventId,   // store eventId as string
+      userEmail,
+    });
+    if (existingRegistration) return res.status(400).json({ error: "Already registered" });
+
+    // ✅ Check max attendees
+    const count = await eventRegistrationsCollection.countDocuments({ eventId });
+    if (event.maxAttendees && count >= event.maxAttendees)
+      return res.status(400).json({ error: "Event is full" });
+
+    // ✅ Insert registration
+    const registration = {
+      eventId: event.title,             // store ObjectId string
+      clubId: event.clubId,
+      userEmail,
+      status: "registered",
+      paymentId: null,
+      registeredAt: new Date(),
+    };
+
+    const result = await eventRegistrationsCollection.insertOne(registration);
+
+    res.status(201).json({ message: "Registered successfully", registration });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Failed to register" });
+    res.status(500).json({ error: "Server error" });
   }
 });
 
 
-// GET /events
+
 app.get("/events", async (req, res) => {
   try {
     const events = await eventsCollection.aggregate([
@@ -715,6 +759,42 @@ app.get("/manager/events/:eventId/register", async (req, res) => {
   }
 });
 
+ app.get("/events/:eventId/registrations", async (req, res) => {
+  try {
+    const { eventId } = req.params; // this is event _id from frontend
+
+    // Find event by _id first
+    const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });
+    if (!event) return res.status(404).json({ message: "Event not found" });
+
+    // Find registrations using event title
+    const registrations = await eventRegistrationsCollection
+      .find({ eventId: event.title })
+      .toArray();
+
+    // Merge user info
+    const usersEmails = registrations.map(r => r.userEmail);
+    const users = await usersCollection.find({ email: { $in: usersEmails } }).toArray();
+
+    const data = registrations.map(reg => {
+      const user = users.find(u => u.email === reg.userEmail);
+      return {
+        ...reg,
+        userName: user?.name || "Anonymous",
+        userPhoto: user?.photoURL || null
+      };
+    });
+
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
+
 
 // app.get("/manager/events", async (req, res) => {
 //   try {
@@ -727,25 +807,10 @@ app.get("/manager/events/:eventId/register", async (req, res) => {
 //   }
 // });
 
-app.get("/events/:eventId/registrations", async (req, res) => {
-  const { eventId } = req.params;
 
-  // 1️⃣ Find the event by _id
-  const event = await eventsCollection.findOne({
-    _id: new ObjectId(eventId),
-  });
 
-  if (!event) {
-    return res.status(404).send({ message: "Event not found" });
-  }
 
-  // 2️⃣ Use event TITLE to fetch registrations
-  const registrations = await eventRegistrationsCollection
-    .find({ eventId: event.title })   // ✅ MATCHES DB
-    .toArray();
 
-  res.send(registrations);
-});
 
 
 
