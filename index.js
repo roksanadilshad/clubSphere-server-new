@@ -55,6 +55,8 @@ const client = new MongoClient(process.env.MONGODB_URI, {
     deprecationErrors: true,
   },
 })
+
+
 async function run() {
   try {
          const db = client.db('clubspheredb')
@@ -792,10 +794,6 @@ app.get("/manager/events/:eventId/register", async (req, res) => {
   }
 });
 
-
-
-
-
 // app.get("/manager/events", async (req, res) => {
 //   try {
 //     const managerEmail = req.user.email; // assuming you have auth middleware
@@ -856,6 +854,7 @@ app.get("/manager/events/:eventId/register", async (req, res) => {
 
 
 //payment related api
+  //1️⃣ payment
 app.post('/create-checkout-session', async (req, res) => {
   const { priceId } = req.body;
   const session = await stripe.checkout.sessions.create({
@@ -867,7 +866,152 @@ app.post('/create-checkout-session', async (req, res) => {
   res.json({ url: session.url });
 });
 
+// admin overview
+// Admin stats route
+app.get("/admin/stats", async (req, res) => {
+  try {
+    // Total counts
+    const totalUsers = await usersCollection.countDocuments();
+    const totalClubs = await clubsCollection.countDocuments();
+    const totalEvents = await eventsCollection.countDocuments();
 
+    // Total revenue from event registrations
+    const registrations = await eventRegistrationsCollection.find().toArray();
+    const events = await eventsCollection.find().toArray();
+
+    const totalRevenue = registrations.reduce((sum, reg) => {
+      const event = events.find(e => e.title === reg.eventId); // eventId stores title
+      return sum + (event?.eventFee || 0);
+    }, 0);
+
+    const memberships = await membershipsCollection.find({ status: "active" }).toArray();
+
+    // Clubs grouped by status
+    const clubs = await clubsCollection.find().toArray();
+    const clubsByStatus = {
+      approved: clubs.filter(c => c.status === "approved").length,
+      pending: clubs.filter(c => c.status === "pending").length,
+      rejected: clubs.filter(c => c.status === "rejected").length,
+    };
+
+    // Recent activity: last 5 club creations + last 5 event creations
+    const recentClubs = await clubsCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .toArray();
+
+    const recentEvents = await eventsCollection
+      .find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .toArray();
+
+    const recentRegistrations = await eventRegistrationsCollection
+      .find()
+      .sort({ registeredAt: -1 })
+      .limit(5)
+      .toArray();
+
+      
+
+    const recentActivity = [
+      ...recentClubs.map(c => ({
+        message: `Club "${c.clubName}" was created`,
+        time: c.createdAt.toLocaleString(),
+      })),
+      ...recentEvents.map(e => ({
+        message: `Event "${e.title}" was created`,
+        time: e.createdAt.toLocaleString(),
+      })),
+      ...recentRegistrations.map(r => ({
+        message: `${r.userEmail} registered for event "${r.eventId}"`,
+        time: r.registeredAt.toLocaleString(),
+      })),
+    ].slice(0, 10); // limit total recent activity to 10
+
+    const clubsByMembership = {};
+    memberships.forEach(m => {
+      clubsByMembership[m.clubId] = (clubsByMembership[m.clubId] || 0) + 1;
+    });
+
+
+    res.json({
+      totalUsers,
+      totalClubs,
+      totalEvents,
+      totalRevenue,
+      clubsByStatus,
+      recentActivity,
+      clubsByMembership,
+    });
+  } catch (err) {
+    console.error("Admin stats error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+
+
+//overview manger
+app.get("/manager/stats", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ message: "Manager email required" });
+
+    // 1️⃣ Get all clubs managed by this manager
+    const clubs = await clubsCollection.find({ managerEmail: email }).toArray();
+
+    const clubIds = clubs.map(c => c._id.toString());
+    const clubNames = clubs.map(c => c.clubName);
+
+    // 2️⃣ Total members across all clubs
+    const memberships = await membershipsCollection.find({ clubId: { $in: clubNames } }).toArray();
+    const totalMembers = memberships.length; // ✅ define this
+
+    // 3️⃣ All events for these clubs
+    const events = await eventsCollection.find({ clubId: { $in: clubIds } }).toArray();
+
+    // 4️⃣ Count registrations for each event
+    const registrations = await eventRegistrationsCollection.find({ clubId: { $in: clubNames } }).toArray();
+
+    const eventStats = events.map(event => {
+      const count = registrations.filter(r => r.eventId === event.title).length;
+      return {
+        id: event._id,
+        title: event.title,
+        date: event.eventDate,
+        clubName: clubs.find(c => c._id.toString() === event.clubId)?.clubName || "Unknown",
+        maxAttendees: event.maxAttendees,
+        registrations: count
+      };
+    });
+
+    const totalRevenue = registrations.reduce((sum, r) => {
+      const event = events.find(e => e.title === r.eventId);
+      return sum + (event?.eventFee || 0);
+    }, 0);
+
+    res.json({
+      totalClubs: clubs.length,
+      totalMembers,
+      totalEvents: events.length,
+      totalRevenue,
+      recentClubs: clubs.slice(-5).map(c => ({
+        id: c._id,
+        name: c.clubName,
+        bannerImage: c.bannerImage,
+        memberCount: memberships.filter(m => m.clubId === c.clubName).length,
+        status: c.status
+      })),
+      upcomingEvents: eventStats.slice(0, 5)
+    });
+
+  } catch (err) {
+    console.error("Manager Stats Error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
 
 
 
@@ -880,6 +1024,9 @@ app.post('/create-checkout-session', async (req, res) => {
     // Ensures that the client will close when you finish/error
   }
 }
+
+
+
 run().catch(console.dir)
 
 app.get('/', (req, res) => {
