@@ -805,6 +805,57 @@ app.get("/manager/events/:eventId/register", async (req, res) => {
 //   }
 // });
 
+//get event for member
+app.get("/member/events", async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    // Get all registrations of the user
+    const registrations = await eventRegistrationsCollection
+      .find({ userEmail: email })
+      .toArray();
+
+    // If no registrations
+    if (!registrations.length) return res.json([]);
+
+    // Fetch events and clubs
+    const eventIds = registrations.map(r => r.eventId);
+    const events = await eventsCollection
+      .find({ title: { $in: eventIds } }) // assuming eventId = event.title
+      .toArray();
+
+    const clubIds = registrations.map(r => r.clubId);
+    const clubs = await clubsCollection
+      .find({ _id: { $in: clubIds.map(id => new ObjectId(id)) } })
+      .toArray();
+
+    // Merge data
+    const merged = registrations.map(reg => {
+      const event = events.find(e => e.title === reg.eventId);
+      const club = clubs.find(c => c._id.toString() === reg.clubId);
+      return {
+        id: reg._id,
+        title: event?.title || "Unknown Event",
+        clubName: club?.clubName || "Unknown Club",
+        date: event?.eventDate,
+        time: event?.time,
+        location: event?.location,
+        status: reg.status,
+        isPaid: !!reg.paymentId,
+        eventFee: event?.eventFee || 0,
+        description: event?.description || "",
+      };
+    });
+
+    res.json(merged);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
+
 
 
 
