@@ -12,6 +12,14 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 })
 
+
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
+
+/// tracking id generator
+const generateTrackingId = () => {
+  return `TRX-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+};
+
 const app = express()
 // middleware
 app.use(
@@ -44,7 +52,6 @@ const verifyJWT = async (req, res, next) => {
   }
 }
 
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -896,7 +903,7 @@ app.get("/member/events", async (req, res) => {
 
 
 
-// GET /api/member/stats?email=example@gmail.com
+// GET / member overview
 app.get("/member/stats", async (req, res) => {
   try {
     const { email } = req.query;
@@ -981,15 +988,127 @@ app.get("/member/stats", async (req, res) => {
 //payment related api
   //1️⃣ payment
 app.post('/create-checkout-session', async (req, res) => {
-  const { priceId } = req.body;
-  const session = await stripe.checkout.sessions.create({
-    line_items: [{ price: priceId, quantity: 1 }],
-    mode: 'payment',
-    success_url: `${process.env.SITE_DOMAIN}/payment-success`,
-    cancel_url: `${process.env.SITE_DOMAIN}/payment-cancel`,
-  });
-  res.json({ url: session.url });
+  try {
+    const { membershipFee, clubName, clubId, userEmail } = req.body;
+
+    if (!membershipFee || !clubName || !clubId || !userEmail) {
+      return res.status(400).send({ message: "Missing payment data" });
+    }
+
+    const amount = parseInt(membershipFee) * 100;
+
+    const session = await stripe.checkout.sessions.create({
+      line_items: [
+        {
+          price_data: {
+            currency: "bdt",
+            unit_amount: amount,
+            product_data: {
+              name: `Please pay for : ${clubName}`,
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      metadata: {
+        clubId,
+        clubName,
+      },
+      customer_email: userEmail,
+      success_url: `${process.env.SITE_DOMAIN}/dashboard/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment-cancelled`,
+    });
+    console.log("SITE_DOMAIN:", process.env.SITE_DOMAIN);
+    
+
+    res.json({ url: session.url });
+
+  } catch (error) {
+    console.error("Stripe error:", error.message);
+    res.status(400).send({ message: error.message });
+  }
 });
+
+
+//make history to save
+app.patch('/payment-success', async (req, res) => {
+  try {
+    const sessionId = req.query.session_id;
+    if (!sessionId) return res.status(400).send({ message: "session_id missing" });
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== 'paid') {
+      return res.status(400).send({ message: "Payment not completed" });
+    }
+
+    const transactionId = session.payment_intent;
+    if (!transactionId) {
+      return res.status(400).send({ message: "Stripe payment_intent missing" });
+    }
+
+    // prevent duplicate
+    const paymentExist = await paymentsCollection.findOne({ stripePaymentIntentId: transactionId });
+    if (paymentExist) {
+      return res.send({
+        message: 'Payment already recorded',
+        trackingId: paymentExist.trackingId,
+        transactionId
+      });
+    }
+
+    const trackingId = generateTrackingId();
+
+    const payment = {
+      amount: session.amount_total / 100,
+      currency: session.currency,
+      userEmail: session.customer_email,
+      clubId: session.metadata.clubId,
+      clubName: session.metadata.clubName,
+      stripePaymentIntentId: transactionId,
+      paymentStatus: session.payment_status,
+      paidAt: new Date(),
+      trackingId
+    };
+
+    const resultPayment = await paymentsCollection.insertOne(payment);
+
+    res.send({
+      success: true,
+      trackingId,
+      transactionId,
+      paymentInfo: resultPayment
+    });
+
+  } catch (error) {
+    console.error("Payment success error:", error);
+    res.status(500).send({ message: "Payment verification failed" });
+  }
+});
+
+
+
+
+        // payment related apis
+        app.get('/payments', verifyJWT, async (req, res) => {
+            const email = req.query.email;
+            const query = {}
+
+            // console.log( 'headers', req.headers);
+
+            if (email) {
+                query.userEmail = email;
+
+                // check email address
+                if (email !== req.decoded_email) {
+                    return res.status(403).send({ message: 'forbidden access' })
+                }
+            }
+            const cursor = paymentsCollection.find(query).sort({ paidAt: -1 });
+            const result = await cursor.toArray();
+            res.send(result);
+        })
 
 // admin overview
 // Admin stats route
