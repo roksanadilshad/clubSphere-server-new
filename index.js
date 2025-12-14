@@ -1086,10 +1086,6 @@ app.patch('/payment-success', async (req, res) => {
     res.status(500).send({ message: "Payment verification failed" });
   }
 });
-
-
-
-
         // payment related apis
         app.get('/payments', verifyJWT, async (req, res) => {
             const email = req.query.email;
@@ -1109,6 +1105,115 @@ app.patch('/payment-success', async (req, res) => {
             const result = await cursor.toArray();
             res.send(result);
         })
+
+
+//event register session
+        // Create Stripe checkout session for event registration
+app.post('/create-event-checkout-session', async (req, res) => {
+  try {
+    const { eventFee, eventTitle, eventId, userEmail } = req.body;
+
+    if (!eventFee || !eventTitle || !eventId || !userEmail) {
+      return res.status(400).send({ message: "Missing payment data for event" });
+    }
+
+    const amount = parseInt(eventFee) * 100; // Stripe expects amount in smallest currency unit
+
+    const session = await stripe.checkout.sessions.create({
+      line_items: [
+        {
+          price_data: {
+            currency: "bdt", // your currency
+            unit_amount: amount,
+            product_data: {
+              name: `Event Registration: ${eventTitle}`,
+            },
+          },
+          quantity: 1,
+        },
+      ],
+      mode: "payment",
+      metadata: {
+        eventId,
+        eventTitle,
+      },
+      customer_email: userEmail,
+      success_url: `${process.env.SITE_DOMAIN}/dashboard/event-payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.SITE_DOMAIN}/dashboard/event-payment-cancelled`,
+    });
+
+    res.json({ url: session.url });
+
+  } catch (error) {
+    console.error("Stripe event checkout error:", error.message);
+    res.status(400).send({ message: error.message });
+  }
+});
+
+
+// event history
+// After successful payment, save the event registration
+app.patch('/event-payment-success', async (req, res) => {
+  try {
+    const sessionId = req.query.session_id;
+    if (!sessionId) return res.status(400).send({ message: "session_id missing" });
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.payment_status !== 'paid') {
+      return res.status(400).send({ message: "Payment not completed" });
+    }
+
+    const transactionId = session.payment_intent;
+
+    // prevent duplicate
+    const paymentExist = await paymentsCollection.findOne({ stripePaymentIntentId: transactionId });
+    if (paymentExist) {
+      return res.send({
+        message: 'Payment already recorded',
+        trackingId: paymentExist.trackingId,
+        transactionId
+      });
+    }
+
+    // Save payment info
+    const trackingId = generateTrackingId(); // make sure this function exists
+
+    const payment = {
+      amount: session.amount_total / 100,
+      currency: session.currency,
+      userEmail: session.customer_email,
+      eventId: session.metadata.eventId,
+      eventTitle: session.metadata.eventTitle,
+      stripePaymentIntentId: transactionId,
+      paymentStatus: session.payment_status,
+      paidAt: new Date(),
+      trackingId
+    };
+
+    await paymentsCollection.insertOne(payment);
+
+    // Save registration
+    await eventRegistrationsCollection.insertOne({
+      eventId: session.metadata.eventId,
+      userEmail: session.customer_email,
+      status: "registered",
+      paymentId: transactionId,
+      registeredAt: new Date()
+    });
+
+    res.send({
+      success: true,
+      trackingId,
+      transactionId
+    });
+
+  } catch (error) {
+    console.error("Event payment success error:", error);
+    res.status(500).send({ message: "Event payment verification failed" });
+  }
+});
+
 
 // admin overview
 // Admin stats route
