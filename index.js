@@ -52,6 +52,44 @@ const verifyJWT = async (req, res, next) => {
   }
 }
 
+// app.post(
+//   "/stripe-webhook",
+//   express.raw({ type: "application/json" }),
+//   async (req, res) => {
+//     const sig = req.headers["stripe-signature"];
+
+//     let event;
+
+//     try {
+//       event = stripe.webhooks.constructEvent(
+//         req.body,
+//         sig,
+//         process.env.STRIPE_WEBHOOK_SECRET
+//       );
+//     } catch (err) {
+//       console.log("Webhook signature failed", err.message);
+//       return res.status(400).send(`Webhook Error`);
+//     }
+
+//     if (event.type === "checkout.session.completed") {
+//       const session = event.data.object;
+
+//       const membership = {
+//         userEmail: session.metadata.userEmail,
+//         clubId: session.metadata.clubId,
+//         clubName: session.metadata.clubName,
+//         status: "active",
+//         paymentId: session.payment_intent,
+//         joinedAt: new Date(),
+//         expiresAt: null,
+//       };
+
+//       await membershipsCollection.insertOne(membership);
+//     }
+
+//     res.json({ received: true });
+//   }
+// );
 
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -262,30 +300,61 @@ app.patch("/admin/clubs/reject/:id", async (req, res) => {
 
 // POST /memberships - user joins a club
 app.post("/memberships", async (req, res) => {
+  console.log("🔥 MEMBERSHIP API HIT");
+  console.log("BODY:", req.body);
   try {
-    const { userEmail, clubId, status, paymentId, joinedAt, expiresAt } = req.body;
+    const {
+      userEmail,
+      clubId,        // MongoDB _id
+      clubName,      // optional
+      status,
+      paymentId,
+      joinedAt,
+      expiresAt,
+       membershipFee
+    } = req.body;
 
+    // validation
     if (!userEmail || !clubId || !status) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields"
+      });
     }
 
     const newMembership = {
       userEmail,
-      clubId,         // store name instead of ObjectId
-      status,
+      clubId,                // ✅ always MongoDB _id
+      clubName: clubName || null,
+      status,                // active | pendingPayment | expired
       paymentId: paymentId || null,
       joinedAt: joinedAt ? new Date(joinedAt) : new Date(),
-      expiresAt: expiresAt ? new Date(expiresAt) : null
+      expiresAt: expiresAt ? new Date(expiresAt) : null,
+      membershipFee: Number(membershipFee) || 0,
     };
 
     const result = await membershipsCollection.insertOne(newMembership);
+console.log("✅ INSERT RESULT:", result);
+    res.status(201).json({
+      success: true,
+      membershipId: result.insertedId,
+      data: newMembership
+    });
 
-    res.status(201).json({ success: true, membershipId: result.insertedId, data: newMembership });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Server error" });
+    console.error("Membership creation error:", err);
+    res.status(500).json({
+      success: false,
+      message: "Server error"
+    });
   }
 });
+
+app.get("/debug/memberships", async (req, res) => {
+  const data = await membershipsCollection.find().toArray();
+  res.send(data);
+});
+
 
 
 // Example GET memberships by user
@@ -1081,6 +1150,16 @@ app.patch('/payment-success', async (req, res) => {
       paymentInfo: resultPayment
     });
 
+    await membershipsCollection.insertOne({
+  userEmail: session.customer_email,
+  clubId: session.metadata.clubId,
+  clubName: session.metadata.clubName,
+  status: "active",
+  paymentId: transactionId,
+  joinedAt: new Date(),
+  expiresAt: null
+});
+
   } catch (error) {
     console.error("Payment success error:", error);
     res.status(500).send({ message: "Payment verification failed" });
@@ -1190,8 +1269,14 @@ app.patch('/event-payment-success', async (req, res) => {
       paidAt: new Date(),
       trackingId
     };
-
-    await paymentsCollection.insertOne(payment);
+   
+   const reslt = await paymentsCollection.insertOne(payment)
+    res.send({
+      success: true,
+      trackingId,
+      transactionId,
+      paymentInfo : reslt
+    });
 
     // Save registration
     await eventRegistrationsCollection.insertOne({
@@ -1200,12 +1285,6 @@ app.patch('/event-payment-success', async (req, res) => {
       status: "registered",
       paymentId: transactionId,
       registeredAt: new Date()
-    });
-
-    res.send({
-      success: true,
-      trackingId,
-      transactionId
     });
 
   } catch (error) {
