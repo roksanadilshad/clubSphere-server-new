@@ -33,6 +33,8 @@ app.use(
     optionSuccessStatus: 200,
   })
 )
+
+
 app.use(express.json())
 
 // jwt middlewares
@@ -1166,7 +1168,7 @@ app.patch('/payment-success', async (req, res) => {
   }
 });
         // payment related apis
-        app.get('/payments', verifyJWT, async (req, res) => {
+        app.get('/payments',  async (req, res) => {
             const email = req.query.email;
             const query = {}
 
@@ -1236,6 +1238,7 @@ app.patch('/event-payment-success', async (req, res) => {
   try {
     const sessionId = req.query.session_id;
     if (!sessionId) return res.status(400).send({ message: "session_id missing" });
+    console.log("Session ID:", sessionId);
 
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
@@ -1243,6 +1246,7 @@ app.patch('/event-payment-success', async (req, res) => {
       return res.status(400).send({ message: "Payment not completed" });
     }
 
+    
     const transactionId = session.payment_intent;
 
     // prevent duplicate
@@ -1257,6 +1261,7 @@ app.patch('/event-payment-success', async (req, res) => {
 
     // Save payment info
     const trackingId = generateTrackingId(); // make sure this function exists
+ console.log("Tracking ID:", trackingId);
 
     const payment = {
       amount: session.amount_total / 100,
@@ -1270,15 +1275,10 @@ app.patch('/event-payment-success', async (req, res) => {
       trackingId
     };
    
-   const reslt = await paymentsCollection.insertOne(payment)
-    res.send({
-      success: true,
-      trackingId,
-      transactionId,
-      paymentInfo : reslt
-    });
+    await paymentsCollection.insertOne(payment);
+      console.log("Payment saved");
 
-    // Save registration
+// Save registration
     await eventRegistrationsCollection.insertOne({
       eventId: session.metadata.eventId,
       userEmail: session.customer_email,
@@ -1286,6 +1286,17 @@ app.patch('/event-payment-success', async (req, res) => {
       paymentId: transactionId,
       registeredAt: new Date()
     });
+    
+
+    res.send({
+      success: true,
+      trackingId,
+      transactionId,
+      
+    });
+
+    
+    
 
   } catch (error) {
     console.error("Event payment success error:", error);
