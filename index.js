@@ -1135,6 +1135,7 @@ app.patch('/payment-success', async (req, res) => {
       amount: session.amount_total / 100,
       currency: session.currency,
       userEmail: session.customer_email,
+      type: "membership",
       clubId: session.metadata.clubId,
       clubName: session.metadata.clubName,
       stripePaymentIntentId: transactionId,
@@ -1168,17 +1169,17 @@ app.patch('/payment-success', async (req, res) => {
   }
 });
         // payment related apis
-        app.get('/payments',  async (req, res) => {
+        app.get('/payments', verifyJWT,  async (req, res) => {
             const email = req.query.email;
             const query = {}
 
-            // console.log( 'headers', req.headers);
+            console.log( 'headers', req.headers);
 
             if (email) {
                 query.userEmail = email;
 
                 // check email address
-                if (email !== req.decoded_email) {
+                if (email !== req.tokenEmail) {
                     return res.status(403).send({ message: 'forbidden access' })
                 }
             }
@@ -1271,6 +1272,7 @@ app.patch('/event-payment-success', async (req, res) => {
       eventTitle: session.metadata.eventTitle,
       stripePaymentIntentId: transactionId,
       paymentStatus: session.payment_status,
+      type: "event",
       paidAt: new Date(),
       trackingId
     };
