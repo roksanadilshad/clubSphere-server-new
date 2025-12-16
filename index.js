@@ -977,10 +977,12 @@ app.post('/manager/apply', async (req, res) => {
     };
 
     const result = await managerApplicationCollection.insertOne(application);
-    res.status(201).json(result.ops[0]);
+    res.status(201).json({message: 'Application submitted successfully',
+            insertedId: result.insertedId});
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Server error', err });
+    return res.status(500).json({ message: 'Server error', err });
   }
 });
 
