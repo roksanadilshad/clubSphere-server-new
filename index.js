@@ -113,6 +113,7 @@ async function run() {
          const membershipsCollection = db.collection('memberships')
          const paymentsCollection = db.collection('payments')
          const usersCollection = db.collection('users')
+         const managerApplicationCollection = db.collection("managerApplication")
 
 
         //  clubs
@@ -932,6 +933,84 @@ app.get("/member/events", async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
+
+//manager apply
+app.post('/manager/apply', async (req, res) => {
+  console.log(req.body);
+  
+  const {
+    email,
+    fullName,
+    phone,
+    occupation,
+    organization,
+    experience,
+    reason,
+    preferredCategories,
+    idNumber,
+    idDocumentUrl,
+  } = req.body;
+
+  if (!email || !fullName || !phone || !reason) {
+    return res.status(400).json({ message: 'Missing required fields' });
+  }
+
+  try {
+    const existing = await managerApplicationCollection.findOne({ email });
+    if (existing) {
+      return res.status(400).json({ message: 'You have already applied' });
+    }
+
+    const application = {
+      email,
+      fullName,
+      phone,
+      occupation: occupation || '',
+      organization: organization || '',
+      experience: experience || '',
+      reason,
+      preferredCategories: preferredCategories || [],
+      idNumber: idNumber || '',
+      idDocumentUrl: idDocumentUrl || '',
+      status: 'pending',
+      appliedAt: new Date()
+    };
+
+    const result = await managerApplicationCollection.insertOne(application);
+    res.status(201).json(result.ops[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error', err });
+  }
+});
+
+//get manager
+app.get('/manager/application/me', async (req, res) => {
+  const email = req.query.email; // pass user email as query param
+  if (!email) return res.status(400).json({ message: 'Email required' });
+
+  try {
+    const application = await managerApplicationCollection.findOne({ email });
+    if (!application) return res.status(404).json({ message: 'No application found' });
+    res.json(application);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+//get application by admin
+app.get('/admin/manager-applications', async (req, res) => {
+  try {
+    const applications = await managerApplicationCollection.find().toArray();
+    res.json(applications);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+//admin status change
 
 
 
