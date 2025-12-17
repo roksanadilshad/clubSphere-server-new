@@ -114,7 +114,8 @@ async function run() {
          const paymentsCollection = db.collection('payments')
          const usersCollection = db.collection('users')
          const managerApplicationCollection = db.collection("managerApplication")
-
+         const contactCollection = db.collection("contact")
+          
 
          // middle admin before allowing admin activity
         // must be used after verifyFBToken middleware
@@ -142,19 +143,62 @@ async function run() {
         // }
 
         //  clubs
-         app.get("/clubs", async (req, res) => {
-  const query = {};
-  if (req.query.status) query.status = req.query.status;
+ app.get("/clubs", async (req, res) => {
+  try {
+    const {
+      limit = 10,       // Default to 10 so it actually returns data
+      skip = 0,
+      sort = 'membershipFee',
+      order = 'desc',
+      search = "",
+      category = ""     // 1. Added category here
+    } = req.query;
 
-  const result = await clubsCollection.find(query).toArray();
-  res.send(result);
+    // Build the sort object
+    const sortOption = {};
+    sortOption[sort] = order === 'asc' ? 1 : -1;
+
+    // 2. Multi-filter Query Logic
+    let query = {};
+
+    if (search) {
+      query.title = { $regex: search, $options: "i" };
+    }
+
+    if (category) {
+      query.category = category; // 3. This matches your "Popular Categories" clicks
+    }
+
+    // Execute database calls
+    const clubs = await clubsCollection
+      .find(query)
+      .sort(sortOption)
+      .skip(Number(skip))
+      .limit(Number(limit))
+      .project({ description: 0, rating: 0 })
+      .toArray();
+
+    const total = await clubsCollection.countDocuments(query);
+
+    res.send({ total, clubs });
+
+  } catch (error) {
+    console.error("Clubs Fetch Error:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 });
 
 // featuredClubs
          app.get("/featuredClubs",  async (req, res) => {
            try{
-                  const clubs = await clubsCollection.find().limit(8).sort({
-membershipFee: -1}).toArray()
+                  const clubs = await clubsCollection
+                  .find()
+                  .limit(8)
+                  .sort({membershipFee: -1})
+                  .project({description: 0, rating: 0, status: 0, managerEmail: 0, 
+                   createdAt: 0 , updatedAt: 0})
+                  .toArray()
+
                   res.send(clubs);
                 }catch(error) {
                    res.status(500).send({message: "Filed to fetch clubs", error});
@@ -344,8 +388,10 @@ app.patch("/admin/clubs/reject/:id", async (req, res) => {
 
 // POST /memberships - user joins a club
 app.post("/memberships", async (req, res) => {
-  console.log("🔥 MEMBERSHIP API HIT");
-  console.log("BODY:", req.body);
+  // console.log("🔥 MEMBERSHIP API HIT");
+  // console.log("BODY:", req.body);
+
+  
   try {
     const {
       userEmail,
@@ -355,7 +401,8 @@ app.post("/memberships", async (req, res) => {
       paymentId,
       joinedAt,
       expiresAt,
-       membershipFee
+       membershipFee,
+       
     } = req.body;
 
     // validation
@@ -366,9 +413,24 @@ app.post("/memberships", async (req, res) => {
       });
     }
 
+    const clubObjectId = new ObjectId(clubId);
+
+    const existing = await membershipsCollection.findOne({
+      userEmail,
+      clubId: clubObjectId,
+      status: { $in: ["active", "pendingPayment"] }
+    });
+
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: "User already joined this club",
+      });
+    }
+
     const newMembership = {
       userEmail,
-      clubId,                // ✅ always MongoDB _id
+      clubId: new ObjectId(clubId),                // ✅ always MongoDB _id
       clubName: clubName || null,
       status,                // active | pendingPayment | expired
       paymentId: paymentId || null,
@@ -376,9 +438,17 @@ app.post("/memberships", async (req, res) => {
       expiresAt: expiresAt ? new Date(expiresAt) : null,
       membershipFee: Number(membershipFee) || 0,
     };
-
+    
     const result = await membershipsCollection.insertOne(newMembership);
 console.log("✅ INSERT RESULT:", result);
+   
+if (status === "active") {
+      await clubsCollection.updateOne(
+        { _id: clubObjectId },
+        { $inc: { memberCount: 1 } }
+      );
+    }
+
     res.status(201).json({
       success: true,
       membershipId: result.insertedId,
@@ -438,6 +508,23 @@ app.get('/memberships', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch memberships' });
+  }
+});
+
+// Get all members of a specific club
+app.get('/memberships/club/:clubId', async (req, res) => {
+  const { clubId } = req.params;
+  if (!clubId) return res.status(400).json({ error: 'Club ID is required' });
+
+  try {
+    const members = await membershipsCollection
+      .find({ clubId: clubId, status: 'active' }) // only active members
+      .toArray();
+
+    res.json(members);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch club members' });
   }
 });
 
@@ -639,42 +726,41 @@ app.get("/manager/members", async (req, res) => {
     const { managerEmail } = req.query;
     if (!managerEmail) return res.status(400).json({ message: "managerEmail required" });
 
-    // Get all clubs managed by this manager
+    // Get clubs managed by this manager
     const clubs = await clubsCollection.find({ managerEmail }).toArray();
-    if (!clubs.length) return res.json([]);
-    const clubIds = clubs.map(c => c._id.toString()); // keep using clubName
+    //if (!clubs.length) return res.json([]);
+
+    const clubIds = clubs.map(c => c._id.toString()); // keep as ObjectId
 
     // Get memberships for these clubs
     const memberships = await membershipsCollection
-      .find({ clubId: { $in: clubIds } })
+      .find({ clubId: { $in: clubIds } }) // match ObjectId
+      .toArray();
+console.log(memberships);
+    // Optional: Merge user info if available
+    const userEmails = memberships.map(m => m.userEmail);
+    const users = await usersCollection
+      .find({ email: { $in: userEmails } })
       .toArray();
 
-      const membershipsWithFee = memberships.map(m => ({
-  ...m,
-  membershipFee: m.membershipFee || 200 // default fee if not set
-}));
-    // Get user info
-    // const userEmails = memberships.map(m => m.userEmail);
-    // const users = await usersCollection
-    //   .find({ email: { $in: userEmails } })
-    //   .toArray();
+    const members = memberships.map(m => {
+      const club = clubs.find(c => c._id.equals(m.clubId));
+      const user = users.find(u => u.email === m.userEmail);
 
-    // // Merge data
-    // const members = memberships.map(m => {
-    //   const club = clubs.find(c => c._id.equals(m.clubId));
-    //   return {
-    //     id: m._id.toString(),           // frontend uses `id`
-    //     name: m.name,
-    //     email: m.email,
-    //     photoURL: m.photoURL || "",     
-    //     clubName: club?.clubName || "Unknown",
-    //     status: m.status || "active",
-    //     joinedAt: m.joinedAt || m.createdAt || new Date(),
-    //     expiryDate: m.expiresAt || null
-    //   };
-    // });
+      return {
+        id: m._id.toString(),
+        name: user?.name || m.name || "Unknown",
+        email: m.userEmail || m.email || "Unknown",
+        photoURL: user?.photoURL || "",
+        clubName: club?.clubName || "Unknown",
+        status: m.status || "active",
+        joinedAt: m.joinedAt || m.createdAt || new Date(),
+        expiryDate: m.expiresAt || null,
+        membershipFee: m.membershipFee || 200
+      };
+    });
 
-    res.send(membershipsWithFee);
+    res.send(members);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch members" });
@@ -805,25 +891,25 @@ app.post("/events/:eventId/register", async (req, res) => {
 
     if (!userEmail) return res.status(400).json({ error: "userEmail is required" });
 
-    // ✅ Find event by _id
+    //  Find event by _id
     const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });
     if (!event) return res.status(404).json({ error: "Event not found" });
 
-    // ✅ Check if already registered
+    //  Check if already registered
     const existingRegistration = await eventRegistrationsCollection.findOne({
       eventId,   // store eventId as string
       userEmail,
     });
     if (existingRegistration) return res.status(400).json({ error: "Already registered" });
 
-    // ✅ Check max attendees
+    //  Check max attendees
     const count = await eventRegistrationsCollection.countDocuments({ eventId });
     if (event.maxAttendees && count >= event.maxAttendees)
       return res.status(400).json({ error: "Event is full" });
 
-    // ✅ Insert registration
+    //  Insert registration
     const registration = {
-      eventId: event.title,             // store ObjectId string
+      eventId: eventId,             // store ObjectId string
       clubId: event.clubId,
       userEmail,
       status: "registered",
@@ -832,7 +918,8 @@ app.post("/events/:eventId/register", async (req, res) => {
     };
 
     const result = await eventRegistrationsCollection.insertOne(registration);
-
+     
+    res.send(result)
     res.status(201).json({ message: "Registered successfully", registration });
   } catch (err) {
     console.error(err);
@@ -887,20 +974,22 @@ app.get("/manager/events/:eventId/register", async (req, res) => {
 
  app.get("/events/:eventId/registrations", async (req, res) => {
   try {
-    const { eventId } = req.params; // this is event _id from frontend
+    const { eventId } = req.params;
 
-    // Find event by _id first
-    const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });
-    if (!event) return res.status(404).json({ message: "Event not found" });
+    if (!ObjectId.isValid(eventId)) {
+      return res.status(400).json({ message: "Invalid eventId" });
+    }
 
-    // Find registrations using event title
+    // ✅ Get registrations by eventId (string)
     const registrations = await eventRegistrationsCollection
-      .find({ eventId: event.title })
+      .find({ eventId }) 
       .toArray();
 
-    // Merge user info
-    const usersEmails = registrations.map(r => r.userEmail);
-    const users = await usersCollection.find({ email: { $in: usersEmails } }).toArray();
+    // ✅ Get user info
+    const userEmails = registrations.map(r => r.userEmail);
+    const users = await usersCollection
+      .find({ email: { $in: userEmails } })
+      .toArray();
 
     const data = registrations.map(reg => {
       const user = users.find(u => u.email === reg.userEmail);
@@ -913,10 +1002,11 @@ app.get("/manager/events/:eventId/register", async (req, res) => {
 
     res.json(data);
   } catch (err) {
-    console.error(err);
+    console.error("Registrations fetch error:", err);
     res.status(500).json({ message: "Server error" });
   }
 });
+
 
 // app.get("/manager/events", async (req, res) => {
 //   try {
@@ -1067,71 +1157,35 @@ app.get('/admin/manager-applications', verifyJWT, async (req, res) => {
 //admin status change
 // Server-side logic to handle 'reject_app'
 
-app.patch("/managers/role/:email", verifyJWT, async (req, res) => {
-    // 1. Get parameters and body
-    const email = req.params.email;
-    const { role } = req.body; // This will be 'manager' or 'reject_app' from the client
+app.patch("/managers/role/:email", async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { role } = req.body;
 
-    // Input validation
-    if (!email || !role) {
-        return res.status(400).send({ message: "Missing email parameter or role in request body." });
+    // ✅ Updated allowed roles
+    const allowedRoles = ["clubManager", "member"];
+    if (!allowedRoles.includes(role)) {
+      return res.status(400).json({
+        message: `Invalid role provided. Must be one of: ${allowedRoles.join(", ")}.`,
+      });
     }
 
-    // 2. Determine target role and application status based on client input
-    let newRole = null;
-    let applicationStatus = 'pending'; // Default application status
+    const result = await usersCollection.updateOne(
+      { email },
+      { $set: { role } }
+    );
 
-    if (role === 'manager') {
-        newRole = 'manager';
-        applicationStatus = 'approved';
-    } else if (role === 'reject_app') { 
-        // Rejection: Do NOT change the user's role (newRole remains null)
-        applicationStatus = 'rejected';
-    } else {
-        return res.status(400).send({ message: "Invalid role provided. Must be 'manager' or 'reject_app'." });
+    if (result.modifiedCount === 0) {
+      return res.status(404).json({ message: "User not found or role unchanged" });
     }
 
-    try {
-        let userUpdateResult = { modifiedCount: 0 };
-        
-        // 3. Conditional User Role Update
-        // ONLY update the user's role if the request is an approval (newRole is 'manager')
-        if (newRole) {
-            userUpdateResult = await usersCollection.updateOne(
-                { email: email },
-                { $set: { role: newRole } }
-            );
-        }
-        
-        // 4. Application Status Update (Always runs for both actions)
-        // We only target applications that are currently 'pending' to ensure idempotency.
-        const applicationUpdateResult = await managerApplicationCollection.updateOne(
-             { email: email, status: 'pending' }, 
-             { $set: { status: applicationStatus } } 
-        );
-
-        // 5. Send Response
-        // Check if any modification was made (either user role or application status)
-        if (userUpdateResult.modifiedCount > 0 || applicationUpdateResult.modifiedCount > 0) {
-            return res.send({ 
-                message: `Application processed. User role: ${newRole || 'unchanged'}. Status: ${applicationStatus}.`, 
-                userModifiedCount: userUpdateResult.modifiedCount,
-                applicationModifiedCount: applicationUpdateResult.modifiedCount
-            });
-        }
-        
-        // If no change was made, it means the application/role was already set.
-        return res.status(200).send({ 
-            message: "No changes made. Application or role may be already processed.", 
-            userModifiedCount: 0,
-            applicationModifiedCount: 0
-        });
-
-    } catch (error) {
-        console.error("Error during manager application processing for:", email, error);
-        res.status(500).send({ message: "Failed to process application on the server.", error });
-    }
+    res.json({ message: `Role updated to ${role} successfully` });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Failed to update role" });
+  }
 });
+
 
 // --- Server Side (Your Express/Node.js file) ---
 
@@ -1158,7 +1212,164 @@ app.delete('/admin/manager-applications/:id', verifyJWT, async (req, res) => {
     }
 });
 
+app.get("/manager/payments", async (req, res) => {
+  try {
+    const { managerEmail } = req.query;
+    if (!managerEmail) {
+      return res.status(400).json({ message: "managerEmail required" });
+    }
 
+    // 1️⃣ Clubs managed by this manager
+    const clubs = await clubsCollection.find({ managerEmail }).toArray();
+    const clubIds = clubs.map(c => c._id.toString());
+
+    // 2️⃣ Events under those clubs
+    const events = await eventsCollection.find({
+      clubId: { $in: clubIds }
+    }).toArray();
+
+    const eventIds = events.map(e => e._id.toString());
+
+    // 3️⃣ Payments (membership + event)
+    const payments = await paymentsCollection.find({
+      $or: [
+        { clubId: { $in: clubIds } },   // club membership payments
+        { eventId: { $in: eventIds } }  // event registration payments
+      ]
+    })
+    .sort({ paidAt: -1 })
+    .toArray();
+
+    res.json({
+      total: payments.length,
+      payments
+    });
+
+  } catch (err) {
+    console.error("Manager Payments Error:", err);
+    res.status(500).json({ message: "Failed to load payments" });
+  }
+});
+
+//search
+// GET /api/clubs/search?query=art&category=Arts
+app.get("/clubs/search", async (req, res) => {
+  const { query = "", category } = req.query;
+
+  const filter = {};
+
+  // Search by name
+  if (query) {
+    filter.name = { $regex: query, $options: "i" };
+  }
+
+  // Filter by multiple categories
+  if (category) {
+    // Split comma-separated string into array
+    const categoriesArray = category.split(",").map(c => c.trim());
+    filter.category = { $in: categoriesArray }; // MongoDB $in matches any
+  }
+
+  const clubs = await clubsCollection.find(filter).toArray();
+  res.json(clubs);
+});
+
+app.get("/api/events", async (req, res) => {
+  const { category = "all", search = "" } = req.query;
+
+  const pipeline = [
+    {
+      $lookup: {
+        from: "clubs",
+        localField: "clubId",
+        foreignField: "_id",
+        as: "club"
+      }
+    },
+    { $unwind: "$club" }
+  ];
+
+  if (category !== "all") {
+    pipeline.push({ $match: { "club.category": category } });
+  }
+
+  if (search) {
+    pipeline.push({
+      $match: {
+        title: { $regex: search, $options: "i" }
+      }
+    });
+  }
+
+  const events = await eventsCollection.aggregate(pipeline).toArray();
+  res.send(events);
+});
+
+//contact us
+app.post("/api/contact", async (req, res) => {
+  try {
+    const { name, email, message } = req.body;
+
+    // ✅ Validation
+    if (!name || !email || !message) {
+      return res.status(400).json({
+        message: "All fields are required",
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        message: "Invalid email address",
+      });
+    }
+
+    const contactData = {
+      name,
+      email,
+      message,
+      createdAt: new Date(),
+    };
+
+    // ✅ Option 1: Save to DB
+    await contactCollection.insertOne(contactData);
+
+    // (Optional) Option 2: Send email via nodemailer later
+
+    res.status(201).json({
+      success: true,
+      message: "Message sent successfully",
+    });
+  } catch (error) {
+    console.error("Contact error:", error);
+    res.status(500).json({
+      message: "Failed to send message",
+    });
+  }
+});
+
+//club catagory
+// app.get("/api/clubs", async (req, res) => {
+//   try {
+//     const { category, search } = req.query;
+//     let query = {};
+
+//     // 1. Filter by Category if provided
+//     if (category) {
+//       query.category = category;
+//     }
+
+//     // 2. Filter by Search Term if provided
+//     if (search) {
+//       query.name = { $regex: search, $options: "i" }; // "i" makes it case-insensitive
+//     }
+
+//     const clubs = await clubsCollection.find(query).toArray();
+//     res.status(200).send(clubs);
+//   } catch (err) {
+//     res.status(500).json({ message: "Error fetching clubs", error: err });
+//   }
+// });
 
 
 
@@ -1647,41 +1858,46 @@ app.get("/member/stats", async (req, res) => {
     if (!email) {
       return res.status(400).json({ error: "Email is required" });
     }
-
-    // 1. Memberships (clubId = clubName)
+console.log("EMAIL FROM QUERY:", email);
+    // 1. Memberships
     const memberships = await membershipsCollection
       .find({ userEmail: email })
       .toArray();
 
-    const clubNames = memberships.map(m => m.clubId);
+    const clubIds = memberships.map(m => new ObjectId(m.clubId));
 
-    // 2. Clubs by name
+    // 2. Clubs
     const clubs = await clubsCollection
-      .find({ clubName: { $in: clubNames } })
+      .find({ _id: { $in: clubIds } })
       .project({ clubName: 1, location: 1, bannerImage: 1 })
       .toArray();
 
-    // 3. Event registrations (eventId = event title)
+    // 3. Event registrations
     const registrations = await eventRegistrationsCollection
       .find({ userEmail: email })
       .toArray();
 
-    const eventTitles = registrations.map(r => r.eventId);
+   const eventIds = registrations.map(r => new ObjectId(r.eventId));
 
-    // 4. Events by title
+
+    // 4. Events
     const events = await eventsCollection
-      .find({ title: { $in: eventTitles } })
-      .project({ title: 1, clubName: 1, date: 1, location: 1, eventFee: 1 })
-      .toArray();
+  .find({ _id: { $in: eventIds } })
+  .project({ title: 1, clubName: 1, date: 1, location: 1, eventFee: 1 })
+  .toArray();
 
     // 5. Upcoming events
     const upcomingEvents = events.filter(
       e => e.date && new Date(e.date) > new Date()
     );
 
-    // 6. Total spent
-    const totalSpent = events.reduce(
-      (sum, e) => sum + (e.eventFee || 0),
+    // 6. Total spent (BETTER)
+    const payments = await paymentsCollection
+      .find({ userEmail: email })
+      .toArray();
+
+    const totalSpent = payments.reduce(
+      (sum, p) => sum + (p.amount || 0),
       0
     );
 
@@ -1703,11 +1919,14 @@ app.get("/member/stats", async (req, res) => {
         location: e.location
       }))
     });
+    console.log({ memberships, clubs, events });
+
   } catch (err) {
     console.error("Member stats error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
+
 
 
 
@@ -1720,20 +1939,24 @@ app.get("/manager/stats", async (req, res) => {
 
     // 1️⃣ Get all clubs managed by this manager
     const clubs = await clubsCollection.find({ managerEmail: email }).toArray();
-
     const clubIds = clubs.map(c => c._id.toString());
-    const clubNames = clubs.map(c => c.clubName);
 
-    // 2️⃣ Total members across all clubs
+    // 2️⃣ Get all memberships of these clubs
     const memberships = await membershipsCollection.find({ clubId: { $in: clubIds } }).toArray();
-    const totalMembers = memberships.length; // ✅ define this
+    const totalMembers = memberships.length;
 
-    // 3️⃣ All events for these clubs
+    // 3️⃣ Get all events for these clubs
     const events = await eventsCollection.find({ clubId: { $in: clubIds } }).toArray();
 
-    // 4️⃣ Count registrations for each event
-    const registrations = await eventRegistrationsCollection.find({ clubId: { $in: clubIds } }).toArray();
+    // 4️⃣ Get all event registrations (payments)
+    const registrations = await paymentsCollection.find({
+      $or: [
+        { clubId: { $in: clubIds } },
+        { eventId: { $in: events.map(e => e._id.toString()) } }
+      ]
+    }).toArray();
 
+    // 5️⃣ Count registrations for each event
     const eventStats = events.map(event => {
       const count = registrations.filter(r => r.eventId === event._id.toString()).length;
       return {
@@ -1746,10 +1969,10 @@ app.get("/manager/stats", async (req, res) => {
       };
     });
 
-    const totalRevenue = registrations.reduce((sum, r) => {
-      const event = events.find(e => e.title === r.eventId);
-      return sum + (event?.eventFee || 0);
-    }, 0);
+    // 6️⃣ Total revenue (memberships + events)
+    const membershipRevenue = memberships.reduce((sum, m) => sum + (Number(m.membershipFee) || 0), 0);
+    const eventRevenue = registrations.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+    const totalRevenue = membershipRevenue + eventRevenue;
 
     res.json({
       totalClubs: clubs.length,
@@ -1771,6 +1994,10 @@ app.get("/manager/stats", async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 });
+
+
+
+
 
 
 
