@@ -129,6 +129,17 @@ async function run() {
 
             next();
         }
+        // const verifyManager = async (req, res, next) => {
+        //     const email = req.decoded_email;
+        //     const query = { email };
+        //     const user = await usersCollection.findOne(query);
+
+        //     if (!user || user.role !== 'clubManager') {
+        //         return res.status(403).send({ message: 'forbidden access' });
+        //     }
+
+        //     next();
+        // }
 
         //  clubs
          app.get("/clubs", async (req, res) => {
@@ -271,21 +282,30 @@ membershipFee: -1}).toArray()
   });
 
 app.get('/users/:email', verifyJWT, async (req, res) => {
-    const email = req.params.email;
+  const email = req.params.email;
 
-    try {
-        const user = await usersCollection.findOne({ email });
+  try {
+    const user = await usersCollection.findOne({ email });
 
-        if (!user) {
-            return res.status(404).send({ message: "User not found" });
-        }
-
-        res.send(user);
-
-    } catch (error) {
-        res.status(500).send({ message: "Server Error", error });
+    if (!user) {
+      return res.status(404).send({ message: "User not found" });
     }
+
+    const response = {
+      name: user.name,
+      email: user.email,
+      photoURL: user.photoURL,
+      role: user.role,             // include role
+      createdAt: user.createdAt,   // include createdAt
+    };
+
+    res.send(response);
+
+  } catch (error) {
+    res.status(500).send({ message: "Server Error", error });
+  }
 });
+
 
 //get all clubs
 app.get("/admin/clubs", async (req, res) => {
@@ -545,7 +565,7 @@ app.get("/clubs/:id", async (req, res) => {
 
 
 //get members of clubs
-app.get("/clubs/:clubId/members", async (req, res) => {
+app.get("/clubs/:clubId/members", verifyJWT, async (req, res) => {
   try {
     const {clubId} = req.params;
 
@@ -621,36 +641,40 @@ app.get("/manager/members", async (req, res) => {
 
     // Get all clubs managed by this manager
     const clubs = await clubsCollection.find({ managerEmail }).toArray();
-    const clubNames = clubs.map(c => c.clubName); // keep using clubName
+    if (!clubs.length) return res.json([]);
+    const clubIds = clubs.map(c => c._id.toString()); // keep using clubName
 
     // Get memberships for these clubs
     const memberships = await membershipsCollection
-      .find({ clubId: { $in: clubNames } })
+      .find({ clubId: { $in: clubIds } })
       .toArray();
 
+      const membershipsWithFee = memberships.map(m => ({
+  ...m,
+  membershipFee: m.membershipFee || 200 // default fee if not set
+}));
     // Get user info
-    const userEmails = memberships.map(m => m.userEmail);
-    const users = await usersCollection
-      .find({ email: { $in: userEmails } })
-      .toArray();
+    // const userEmails = memberships.map(m => m.userEmail);
+    // const users = await usersCollection
+    //   .find({ email: { $in: userEmails } })
+    //   .toArray();
 
-    // Merge data
-    const members = memberships.map((m) => {
-      const user = users.find(u => u.email === m.userEmail);
-      return {
-        id: m._id,
-        name: user?.name || "Unknown",
-        email: m.userEmail,
-        photoURL: user?.photoURL || null,
-        status: m.status,
-        joinedAt: m.joinedAt,
-        expiryDate: m.expiresAt,
-        clubName: m.clubId,
-        membershipFee: m.membershipFee || 0,
-      };
-    });
+    // // Merge data
+    // const members = memberships.map(m => {
+    //   const club = clubs.find(c => c._id.equals(m.clubId));
+    //   return {
+    //     id: m._id.toString(),           // frontend uses `id`
+    //     name: m.name,
+    //     email: m.email,
+    //     photoURL: m.photoURL || "",     
+    //     clubName: club?.clubName || "Unknown",
+    //     status: m.status || "active",
+    //     joinedAt: m.joinedAt || m.createdAt || new Date(),
+    //     expiryDate: m.expiresAt || null
+    //   };
+    // });
 
-    res.json(members);
+    res.send(membershipsWithFee);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to fetch members" });
@@ -1511,7 +1535,7 @@ app.patch('/event-payment-success', async (req, res) => {
 
 
 
-// After successful payment, save the event registration
+// Admin overview
 app.get("/admin/stats", async (req, res) => {
   try {
     // 1️⃣ Basic counts
@@ -1615,8 +1639,8 @@ app.get("/admin/stats", async (req, res) => {
 
 
 
-// admin overview
-// Admin stats route
+
+// member overview
 app.get("/member/stats", async (req, res) => {
   try {
     const { email } = req.query;
@@ -1701,17 +1725,17 @@ app.get("/manager/stats", async (req, res) => {
     const clubNames = clubs.map(c => c.clubName);
 
     // 2️⃣ Total members across all clubs
-    const memberships = await membershipsCollection.find({ clubId: { $in: clubNames } }).toArray();
+    const memberships = await membershipsCollection.find({ clubId: { $in: clubIds } }).toArray();
     const totalMembers = memberships.length; // ✅ define this
 
     // 3️⃣ All events for these clubs
     const events = await eventsCollection.find({ clubId: { $in: clubIds } }).toArray();
 
     // 4️⃣ Count registrations for each event
-    const registrations = await eventRegistrationsCollection.find({ clubId: { $in: clubNames } }).toArray();
+    const registrations = await eventRegistrationsCollection.find({ clubId: { $in: clubIds } }).toArray();
 
     const eventStats = events.map(event => {
-      const count = registrations.filter(r => r.eventId === event.title).length;
+      const count = registrations.filter(r => r.eventId === event._id.toString()).length;
       return {
         id: event._id,
         title: event.title,
@@ -1736,7 +1760,7 @@ app.get("/manager/stats", async (req, res) => {
         id: c._id,
         name: c.clubName,
         bannerImage: c.bannerImage,
-        memberCount: memberships.filter(m => m.clubId === c.clubName).length,
+        memberCount: memberships.filter(m => m.clubId === c._id.toString()).length,
         status: c.status
       })),
       upcomingEvents: eventStats.slice(0, 5)
