@@ -140,7 +140,7 @@ async function run() {
     const email = req.decoded?.email; // Must match verifyJWT
     const user = await usersCollection.findOne({ email });
 
-    if (user?.role !== 'manager') {
+    if (user?.role !== 'clubManager') {
         return res.status(403).send({ message: 'Forbidden: Managers only' });
     }
     next();
