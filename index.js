@@ -1922,6 +1922,14 @@ console.log("EMAIL FROM QUERY:", email);
 
 //overview manger
 app.get("/manager/stats",verifyJWT, verifyManager, async (req, res) => {
+  // Use req.decoded.email because that's what verifyJWT provides
+  const emailFromToken = req.decoded?.email; 
+  const emailFromQuery = req.query.email;
+
+  // Comparison check
+  if (!emailFromToken || emailFromQuery !== emailFromToken) {
+    return res.status(403).json({ message: "Unauthorized: Email mismatch" });
+  }
   try {
     const { email } = req.query;
     if (!email) return res.status(400).json({ message: "Manager email required" });
