@@ -120,19 +120,22 @@ async function run() {
          // middle admin before allowing admin activity
         // must be used after verifyFBToken middleware
         const verifyAdmin = async (req, res, next) => {
-            const email = req.tokenEmail;
-            if (!email) {
-        return res.status(401).send({ message: 'Unauthorized: No email found in token' });
+    // Correctly accessing the email from req.decoded
+    const email = req.decoded?.email; 
+    
+    if (!email) {
+        return res.status(401).send({ message: 'Unauthorized: No email in token' });
     }
-            const query = { email };
-            const user = await usersCollection.findOne(query);
 
-            if (!user || user.role !== 'admin') {
-                return res.status(403).send({ message: 'forbidden access' });
-            }
+    const query = { email };
+    const user = await usersCollection.findOne(query);
 
-            next();
-        }
+    if (!user || user.role !== 'admin') {
+        return res.status(403).send({ message: 'Forbidden access' });
+    }
+
+    next();
+};
         const verifyManager = async (req, res, next) => {
   try {
     const email = req.tokenEmail; // set by verifyJWT
@@ -272,21 +275,13 @@ async function run() {
         res.send(result)
        });
 
-       app.get('/users/:email/role', async (req, res) => {
-  try {
+      app.get('/users/:email/role', async (req, res) => {
     const email = req.params.email;
-    const user = await usersCollection.findOne({ email });
-    
-    // If user isn't in DB yet, don't crash, return 'member'
-    if (!user) {
-      return res.send({ role: 'member' });
+    if (!email || email === "undefined") {
+        return res.status(400).send({ message: "Invalid email parameter" });
     }
-    
-    res.send({ role: user.role });
-  } catch (error) {
-    console.error("Role Check Error:", error);
-    res.status(500).send({ message: "Internal Server Error" });
-  }
+    const user = await usersCollection.findOne({ email });
+    res.send({ role: user?.role || 'user' });
 });
        // get All clubs (admin)
        app.get("/clubs", verifyJWT, async (req, res) =>{
