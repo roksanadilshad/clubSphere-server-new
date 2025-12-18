@@ -137,22 +137,13 @@ async function run() {
     next();
 };
         const verifyManager = async (req, res, next) => {
-    // This MUST match what you set in verifyJWT (req.decoded)
-    const email = req.decoded?.email; 
-    
-    if (!email) {
-        return res.status(401).send({ message: 'Unauthorized: No email found' });
+    const email = req.decoded?.email; // Ensure this is decoded, not tokenEmail
+    const user = await usersCollection.findOne({ email });
+
+    // Is it 'manager' or 'Manager'? It must be exactly what is in your DB.
+    if (user?.role !== 'manager') { 
+        return res.status(403).send({ message: 'Forbidden' });
     }
-
-    const user = await usersCollection.findOne({ email: email });
-
-    // DEBUG: Add this console log to see what's happening in your Vercel/Node logs
-    console.log(`Checking role for ${email}: Found role -> ${user?.role}`);
-
-    if (!user || user.role !== 'manager') {
-        return res.status(403).send({ message: 'Forbidden: Manager access required' });
-    }
-
     next();
 };
 
