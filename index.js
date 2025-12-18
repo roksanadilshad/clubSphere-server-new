@@ -44,8 +44,8 @@ const verifyJWT = async (req, res, next) => {
 
   if (!token) return res.status(401).send({ message: 'Unauthorized Access!' })
   try {
-    const decoded = await admin.auth().verifyIdToken(token)
-    req.tokenEmail = decoded.email
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.decoded = decoded;
     //console.log(decoded)
     next()
   } catch (err) {
@@ -120,7 +120,10 @@ async function run() {
          // middle admin before allowing admin activity
         // must be used after verifyFBToken middleware
         const verifyAdmin = async (req, res, next) => {
-            const email = req.decoded_email;
+            const email = req.tokenEmail;
+            if (!email) {
+        return res.status(401).send({ message: 'Unauthorized: No email found in token' });
+    }
             const query = { email };
             const user = await usersCollection.findOne(query);
 
