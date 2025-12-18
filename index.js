@@ -24,9 +24,12 @@ const app = express()
 // middleware
 app.use(
   cors({
-    origin: 'https://club-sphere-client-new-62n4.vercel.app',
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    origin:[ 'https://club-sphere-client-new-62n4.vercel.app',,
+      'http://localhost:5173',
+    ],
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     optionSuccessStatus: 200,
   })
 )
