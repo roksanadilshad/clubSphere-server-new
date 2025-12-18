@@ -137,22 +137,23 @@ async function run() {
     next();
 };
         const verifyManager = async (req, res, next) => {
-  try {
-    const email = req.tokenEmail; // set by verifyJWT
+    // 1. Ensure it uses req.decoded (to match your verifyJWT)
+    const email = req.decoded?.email; 
+    
+    if (!email) {
+        return res.status(401).send({ message: 'Unauthorized access' });
+    }
 
-    const user = await usersCollection.findOne({ email });
+    const query = { email: email };
+    const user = await usersCollection.findOne(query);
 
-    if (!user || user.role !== "clubManager") {
-      return res.status(403).json({
-        message: "Forbidden: Manager access required",
-      });
+    // 2. Check if the role is EXACTLY 'manager'
+    // Log it to debug: console.log('User role found:', user?.role);
+    if (!user || user.role !== 'manager') {
+        return res.status(403).send({ message: 'Forbidden: You are not a manager' });
     }
 
     next();
-  } catch (error) {
-    console.error("verifyManager error:", error);
-    res.status(500).json({ message: "Server error" });
-  }
 };
 
  app.get("/clubs", async (req, res) => {
