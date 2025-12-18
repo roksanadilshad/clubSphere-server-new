@@ -1587,24 +1587,25 @@ app.patch('/payment-success', async (req, res) => {
 });
 
         // payment related apis
-        app.get('/payments', verifyJWT,  async (req, res) => {
-            const email = req.query.email;
-            const query = {}
+       app.get('/payments', verifyJWT, async (req, res) => {
+    const email = req.query.email;
+    const query = {};
 
-            //console.log( 'headers', req.headers);
+    if (email) {
+        query.userEmail = email; // Make sure your DB field is 'userEmail' and not 'email'
 
-            if (email) {
-                query.userEmail = email;
+        // FIX: Match the variable name used in your verifyJWT middleware
+        const decodedEmail = req.decoded?.email; 
 
-                // check email address
-                if (email !== req.tokenEmail) {
-                    return res.status(403).send({ message: 'forbidden access' })
-                }
-            }
-            const cursor = paymentsCollection.find(query).sort({ paidAt: -1 });
-            const result = await cursor.toArray();
-            res.send(result);
-        })
+        if (email !== decodedEmail) {
+            return res.status(403).send({ message: 'Forbidden access' });
+        }
+    }
+    
+    const cursor = paymentsCollection.find(query).sort({ paidAt: -1 });
+    const result = await cursor.toArray();
+    res.send(result);
+});
 
 
 //event register session
