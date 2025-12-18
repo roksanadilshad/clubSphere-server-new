@@ -1922,9 +1922,6 @@ console.log("EMAIL FROM QUERY:", email);
 
 //overview manger
 app.get("/manager/stats",verifyJWT, verifyManager, async (req, res) => {
-  if (req.query.email !== req.tokenEmail) {
-    return res.status(403).json({ message: "Unauthorized access" });
-  }
   try {
     const { email } = req.query;
     if (!email) return res.status(400).json({ message: "Manager email required" });
