@@ -137,12 +137,11 @@ async function run() {
     next();
 };
         const verifyManager = async (req, res, next) => {
-    const email = req.decoded?.email; // Ensure this is decoded, not tokenEmail
+    const email = req.decoded?.email; // Must match verifyJWT
     const user = await usersCollection.findOne({ email });
 
-    // Is it 'manager' or 'Manager'? It must be exactly what is in your DB.
-    if (user?.role !== 'manager') { 
-        return res.status(403).send({ message: 'Forbidden' });
+    if (user?.role !== 'manager') {
+        return res.status(403).send({ message: 'Forbidden: Managers only' });
     }
     next();
 };
@@ -1913,13 +1912,13 @@ console.log("EMAIL FROM QUERY:", email);
 
 //overview manger
 app.get("/manager/stats",verifyJWT, verifyManager, async (req, res) => {
-  // Use req.decoded.email because that's what verifyJWT provides
-  const emailFromToken = req.decoded?.email; 
+  // Fix: Use req.decoded.email to match your middleware
+  const emailFromToken = req.decoded?.email;
   const emailFromQuery = req.query.email;
 
-  // Comparison check
+  // This check fails if the variable names don't match exactly
   if (!emailFromToken || emailFromQuery !== emailFromToken) {
-    return res.status(403).json({ message: "Unauthorized: Email mismatch" });
+    return res.status(403).json({ message: "Unauthorized access" });
   }
   try {
     const { email } = req.query;
