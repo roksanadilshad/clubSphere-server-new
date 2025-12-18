@@ -273,11 +273,21 @@ async function run() {
        });
 
        app.get('/users/:email/role', async (req, res) => {
-            const email = req.params.email;
-            const query = { email }
-            const user = await usersCollection.findOne(query);
-            res.send({ role: user?.role || 'user' })
-        })
+  try {
+    const email = req.params.email;
+    const user = await usersCollection.findOne({ email });
+    
+    // If user isn't in DB yet, don't crash, return 'member'
+    if (!user) {
+      return res.send({ role: 'member' });
+    }
+    
+    res.send({ role: user.role });
+  } catch (error) {
+    console.error("Role Check Error:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
        // get All clubs (admin)
        app.get("/clubs", verifyJWT, async (req, res) =>{
         const result = await clubsCollection.find().toArray();
