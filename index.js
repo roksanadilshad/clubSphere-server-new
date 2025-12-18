@@ -130,19 +130,25 @@ async function run() {
 
             next();
         }
-        // const verifyManager = async (req, res, next) => {
-        //     const email = req.decoded_email;
-        //     const query = { email };
-        //     const user = await usersCollection.findOne(query);
+        const verifyManager = async (req, res, next) => {
+  try {
+    const email = req.tokenEmail; // set by verifyJWT
 
-        //     if (!user || user.role !== 'clubManager') {
-        //         return res.status(403).send({ message: 'forbidden access' });
-        //     }
+    const user = await usersCollection.findOne({ email });
 
-        //     next();
-        // }
+    if (!user || user.role !== "clubManager") {
+      return res.status(403).json({
+        message: "Forbidden: Manager access required",
+      });
+    }
 
-        //  clubs
+    next();
+  } catch (error) {
+    console.error("verifyManager error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
  app.get("/clubs", async (req, res) => {
   try {
     const {
@@ -258,7 +264,7 @@ async function run() {
          })
 
        // get All user (admin)
-       app.get("/users", verifyJWT, async (req, res) =>{
+       app.get("/users", verifyJWT, verifyAdmin, async (req, res) =>{
         const result = await usersCollection.find().toArray();
         res.send(result)
        });
@@ -309,7 +315,7 @@ async function run() {
         });
 
  //user Update (admin)
-         app.patch("/users/role/:email", verifyJWT, async (req, res)=>{
+         app.patch("/users/role/:email", verifyJWT, verifyAdmin, async (req, res)=>{
           const email = req.params.email;
              const {role} = req.body;
             
@@ -362,7 +368,7 @@ app.get("/admin/clubs", async (req, res) => {
 });
 
 //approve a club
-app.patch("/admin/clubs/approve/:id", async (req, res) => {
+app.patch("/admin/clubs/approve/:id", verifyJWT, verifyAdmin, async (req, res) => {
   const id = req.params.id;
 
   const result = await clubsCollection.updateOne(
@@ -374,7 +380,7 @@ app.patch("/admin/clubs/approve/:id", async (req, res) => {
 });
 
 //reject a club
-app.patch("/admin/clubs/reject/:id", async (req, res) => {
+app.patch("/admin/clubs/reject/:id", verifyJWT, verifyAdmin, async (req, res) => {
   const id = req.params.id;
 
   const result = await clubsCollection.updateOne(
@@ -387,7 +393,7 @@ app.patch("/admin/clubs/reject/:id", async (req, res) => {
 
 
 // POST /memberships - user joins a club
-app.post("/memberships", async (req, res) => {
+app.post("/memberships", verifyJWT, async (req, res) => {
   // console.log("🔥 MEMBERSHIP API HIT");
   // console.log("BODY:", req.body);
 
@@ -495,7 +501,7 @@ app.get("/memberships/check", async (req, res) => {
 
 
 // GET /memberships?userEmail=...
-app.get('/memberships', async (req, res) => {
+app.get('/memberships',verifyJWT, async (req, res) => {
   const { userEmail } = req.query;
   if (!userEmail) return res.status(400).json({ error: 'User email is required' });
 
@@ -530,7 +536,7 @@ app.get('/memberships/club/:clubId', async (req, res) => {
 
 
 //leave club
- app.delete("/memberships/:id", async (req, res) => {
+ app.delete("/memberships/:id", verifyJWT, async (req, res) => {
   const { id } = req.params;
   if (!ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid ID" });
   const result = await membershipsCollection.deleteOne({ _id: new ObjectId(id) });
@@ -568,7 +574,7 @@ app.patch("/clubs/:id", async (req, res) => {
 
 
 // Fetch all clubs for a manager
-app.get("/manager/clubs", async (req, res) => {
+app.get("/manager/clubs", verifyJWT,verifyManager, async (req, res) => {
   const email = req.query.email;
   if (!email) return res.status(400).json({ message: "Email required" });
   const clubs = await clubsCollection.find({ managerEmail: email }).toArray();
@@ -721,7 +727,7 @@ app.patch("/memberships/:id/expire", async (req, res) => {
 
 
 // GET /manager/members?managerEmail=...
-app.get("/manager/members", async (req, res) => {
+app.get("/manager/members", verifyJWT, verifyManager, async (req, res) => {
   try {
     const { managerEmail } = req.query;
     if (!managerEmail) return res.status(400).json({ message: "managerEmail required" });
@@ -770,7 +776,7 @@ console.log(memberships);
 
 
 // Get all events for a manager's clubs
-app.get("/manager/events", async (req, res) => {
+app.get("/manager/events", verifyJWT, verifyManager, async (req, res) => {
   try {
     const email = req.query.email; // manager email
     if (!email) return res.status(400).json({ message: "Email required" });
@@ -884,7 +890,7 @@ app.delete("/events/:id", async (req, res) => {
 
 
 // GET /events
-app.post("/events/:eventId/register", async (req, res) => {
+app.post("/events/:eventId/register", verifyJWT, async (req, res) => {
   try {
     const { eventId } = req.params;   // eventId = ObjectId string
     const { userEmail } = req.body;
@@ -1144,7 +1150,7 @@ app.get('/manager/application/me', async (req, res) => {
 });
 
 //get application by admin
-app.get('/admin/manager-applications', verifyJWT, async (req, res) => {
+app.get('/admin/manager-applications', verifyJWT, verifyAdmin, async (req, res) => {
   try {
     const applications = await managerApplicationCollection.find({status: 'pending'}).toArray();
     res.send(applications);
@@ -1189,7 +1195,7 @@ app.patch("/managers/role/:email", async (req, res) => {
 
 // --- Server Side (Your Express/Node.js file) ---
 
-app.delete('/admin/manager-applications/:id', verifyJWT, async (req, res) => {
+app.delete('/admin/manager-applications/:id', verifyJWT, verifyAdmin, async (req, res) => {
     const id = req.params.id;
 
     if (!id) {
@@ -1212,7 +1218,7 @@ app.delete('/admin/manager-applications/:id', verifyJWT, async (req, res) => {
     }
 });
 
-app.get("/manager/payments", async (req, res) => {
+app.get("/manager/payments", verifyJWT, verifyManager, async (req, res) => {
   try {
     const { managerEmail } = req.query;
     if (!managerEmail) {
@@ -1348,6 +1354,14 @@ app.post("/api/contact", async (req, res) => {
   }
 });
 
+
+
+
+
+
+
+
+
 //club catagory
 // app.get("/api/clubs", async (req, res) => {
 //   try {
@@ -1370,40 +1384,6 @@ app.post("/api/contact", async (req, res) => {
 //     res.status(500).json({ message: "Error fetching clubs", error: err });
 //   }
 // });
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -1747,7 +1727,7 @@ app.patch('/event-payment-success', async (req, res) => {
 
 
 // Admin overview
-app.get("/admin/stats", async (req, res) => {
+app.get("/admin/stats", verifyJWT, verifyAdmin, async (req, res) => {
   try {
     // 1️⃣ Basic counts
     const totalUsers = await usersCollection.countDocuments();
@@ -1932,7 +1912,10 @@ console.log("EMAIL FROM QUERY:", email);
 
 
 //overview manger
-app.get("/manager/stats", async (req, res) => {
+app.get("/manager/stats",verifyJWT, verifyManager, async (req, res) => {
+  if (req.query.email !== req.tokenEmail) {
+    return res.status(403).json({ message: "Unauthorized access" });
+  }
   try {
     const { email } = req.query;
     if (!email) return res.status(400).json({ message: "Manager email required" });
