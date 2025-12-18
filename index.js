@@ -1592,9 +1592,11 @@ app.patch('/payment-success', async (req, res) => {
     const query = {};
 
     if (email) {
-        query.userEmail = email; // Make sure your DB field is 'userEmail' and not 'email'
+        // IMPORTANT: Ensure this matches your MongoDB field name
+        // If your DB uses 'email', change this to query.email = email;
+        query.userEmail = email; 
 
-        // FIX: Match the variable name used in your verifyJWT middleware
+        // FIX: Match the variable assigned in your verifyJWT middleware
         const decodedEmail = req.decoded?.email; 
 
         if (email !== decodedEmail) {
